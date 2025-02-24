@@ -34,6 +34,7 @@ import (
     "context"
     "github.com/go-logr/logr"
     "github.com/kubetracer/kubetracer"
+    "github.com/kubetracer/kubetracer/predicates"
     "go.opentelemetry.io/otel"
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -68,6 +69,70 @@ func (r *MyController) Reconcile(ctx context.Context, req reconcile.Request) (re
 
     return reconcile.Result{}, nil
 }
+```
+
+3. Create the Add Function
+
+```golang
+func Add(mgr manager.Manager, logger logr.Logger) error {
+    // Setup the controller
+    c, err := controller.New("my-controller", mgr, controller.Options{
+        Reconciler: &MyController{
+            Client: kubetracer.NewTracingClient(mgr.GetClient(), otel.Tracer("kubetracer"), logger),
+            Logger: logger,
+        },
+    })
+    if err != nil {
+        return err
+    }
+
+    // Watch for changes to primary resource
+    err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForObject{}, predicates.IgnoreTraceAnnotationUpdatePredicate{})
+    if err != nil {
+        return err
+    }
+
+    return nil
+}
+```
+
+4. Set Up the Manager in the Main Package:
+
+```golang
+package main
+
+import (
+    "os"
+    "github.com/go-logr/logr"
+    "github.com/kubetracer/kubetracer/controllers"
+    "sigs.k8s.io/controller-runtime/pkg/manager"
+    "sigs.k8s.io/controller-runtime/pkg/log/zap"
+    "sigs.k8s.io/controller-runtime/pkg/manager/signals"
+)
+
+func main() {
+    // Set up the logger
+    logger := zap.New(zap.UseDevMode(true))
+
+    // Create a new manager
+    mgr, err := manager.New(manager.GetConfigOrDie(), manager.Options{})
+    if err != nil {
+        logger.Error(err, "Unable to set up overall controller manager")
+        os.Exit(1)
+    }
+
+    // Add the controller to the manager
+    if err := controllers.Add(mgr, logger); err != nil {
+        logger.Error(err, "Unable to add controller to manager")
+        os.Exit(1)
+    }
+
+    // Start the manager
+    if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
+        logger.Error(err, "Unable to start manager")
+        os.Exit(1)
+    }
+} 
 ```
 
 ## Contributing
