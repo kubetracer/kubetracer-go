@@ -65,22 +65,29 @@ func (tc *TracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 	return tc.Client.Delete(ctx, obj, opts...)
 }
 
+// CreateSpanID generates a new span ID and returns the updated context
+func (tc *TracingClient) CreateSpanID(ctx context.Context, operationName string) context.Context {
+	ctx, span := tc.Tracer.Start(ctx, operationName)
+	defer span.End()
+	return ctx
+}
+
 // startSpanFromContext starts a new span from the context and attaches trace information to the object
 func (tc *TracingClient) startSpanFromContext(ctx context.Context, obj client.Object, operationName string) (context.Context, trace.Span) {
 	// Check if context already has a trace span
 	span := trace.SpanFromContext(ctx)
-	if !span.SpanContext().HasTraceID() {
-		// No trace ID in context, check object annotations
-		traceID, traceIDOk := obj.GetAnnotations()[constants.TraceIDAnnotation]
-		if traceIDOk {
-			traceIDValue, err := trace.TraceIDFromHex(traceID)
-			if err != nil {
-				tc.Logger.Error(err, "Invalid trace ID", "traceID", traceID)
-			} else {
+	if !span.SpanContext().IsValid() {
+		// No valid trace ID in context, check object annotations
+		if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
+			if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
 				spanContext := trace.NewSpanContext(trace.SpanContextConfig{
-					TraceID: traceIDValue,
+					TraceID:    traceIDValue,
+					SpanID:     trace.SpanID{}, // You can generate a new SpanID if needed
+					TraceFlags: trace.FlagsSampled,
 				})
 				ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
+			} else {
+				tc.Logger.Error(err, "Invalid trace ID", "traceID", traceID)
 			}
 		}
 	}
