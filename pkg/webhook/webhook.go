@@ -38,18 +38,17 @@ func (a *WebhookServer) Handle(w http.ResponseWriter, r *http.Request) {
 	userID := os.Getenv("USER_ID")
 
 	if user != userID {
-		annotations := req.Object.Raw
-		var obj map[string]interface{}
-		err := json.Unmarshal(annotations, &obj)
-		if err != nil {
+		// Check if the annotation exists and create the JSON patch to remove it
+		var resource map[string]interface{}
+		if err := json.Unmarshal(req.Object.Raw, &resource); err != nil {
 			http.Error(w, fmt.Sprintf("could not unmarshal object: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
-			if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
-				if _, ok := annotations[constants.TraceIDAnnotation]; ok {
-					delete(annotations, constants.TraceIDAnnotation)
+		// Navigate the map to find and remove the annotation if it exists
+		if metadata, found := resource["metadata"].(map[string]interface{}); found {
+			if annotations, found := metadata["annotations"].(map[string]interface{}); found {
+				if _, exists := annotations[constants.TraceIDAnnotation]; exists {
 					patch := []map[string]string{{
 						"op":   "remove",
 						"path": "/metadata/annotations/" + constants.TraceIDAnnotation,
@@ -80,6 +79,7 @@ func (a *WebhookServer) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// If the annotation does not exist or the user matches USER_ID, allow the request without modification
 	response := admissionv1.AdmissionResponse{
 		UID:     req.UID,
 		Allowed: true,

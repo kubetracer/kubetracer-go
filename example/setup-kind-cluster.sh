@@ -65,3 +65,17 @@ EOF
 
 # 6. Install cert manager
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.17.0/cert-manager.yaml
+
+# 7. Install manifests
+kubectl apply -f k8s/manifests.yaml
+
+# 8. Build and push webhook image
+docker build -t localhost:5001/kubetracer-webhook:latest -f ../pkg/webhook/Dockerfile .
+docker push localhost:5001/kubetracer-webhook:latest
+
+# 9. Deploy webhook
+kubectl apply -f ../pkg/webhook/manifests.yaml
+
+# 10. build and push example operator
+docker build -t localhost:5001/example-operator:latest -f example-operator/Dockerfile .
+docker push localhost:5001/example-operator:latest
