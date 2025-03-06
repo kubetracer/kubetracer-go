@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/kubetracer/kubetracer-go/pkg/constants"
+	constants "github.com/kubetracer/kubetracer-go/constants"
 	admissionv1 "k8s.io/api/admission/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
