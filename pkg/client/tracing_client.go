@@ -76,6 +76,10 @@ func (tc *TracingClient) CreateSpanID(ctx context.Context, operationName string)
 func (tc *TracingClient) startSpanFromContext(ctx context.Context, obj client.Object, operationName string) (context.Context, trace.Span) {
 	// Check if context already has a trace span
 	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		return ctx, span
+	}
+
 	if !span.SpanContext().IsValid() {
 		// No valid trace ID in context, check object annotations
 		if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {

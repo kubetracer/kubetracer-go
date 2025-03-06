@@ -58,7 +58,7 @@ func (r *ExampleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// create configmap
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "example-configmap",
+			Name:      example.GetLabels()["configName"],
 			Namespace: "monitoring",
 		},
 		Data: map[string]string{
