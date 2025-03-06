@@ -37,6 +37,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	kubetracer "github.com/kubetracer/kubetracer-go/pkg/client"
+	"go.opentelemetry.io/otel"
+
 	examplev1 "github.com/kubebuilder/kubebuilder-go/example/example-operator/api/v1"
 	"github.com/kubebuilder/kubebuilder-go/example/example-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
@@ -87,7 +90,8 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	logger := zap.New(zap.UseFlagOptions(&opts))
+	ctrl.SetLogger(logger)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -203,7 +207,7 @@ func main() {
 	}
 
 	if err = (&controller.ExampleReconciler{
-		Client: mgr.GetClient(),
+		Client: kubetracer.NewTracingClient(mgr.GetClient(), otel.Tracer("kubetracer"), logger),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Example")

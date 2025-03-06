@@ -19,9 +19,11 @@ package controller
 import (
 	"context"
 
+	kubetracer "github.com/kubetracer/kubetracer-go/pkg/client"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	examplev1 "github.com/kubebuilder/kubebuilder-go/example/example-operator/api/v1"
@@ -29,7 +31,7 @@ import (
 
 // ExampleReconciler reconciles a Example object
 type ExampleReconciler struct {
-	client.Client
+	Client *kubetracer.TracingClient
 	Scheme *runtime.Scheme
 }
 
@@ -48,6 +50,24 @@ type ExampleReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.20.2/pkg/reconcile
 func (r *ExampleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
+	example := &examplev1.Example{}
+	if err := r.Client.Get(ctx, req.NamespacedName, example); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// create configmap
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "example-configmap",
+			Namespace: "monitoring",
+		},
+		Data: map[string]string{
+			"example-key": "example-value",
+		},
+	}
+	if err := r.Client.Create(ctx, configMap); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// TODO(user): your logic here
 

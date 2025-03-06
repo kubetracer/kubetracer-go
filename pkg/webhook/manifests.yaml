@@ -18,7 +18,7 @@ webhooks:
         name: kubetracer-webhook-service
         namespace: monitoring
         path: /mutate
-      caBundle: <CA_BUNDLE>
+      caBundle: CABUNDLE
     rules:
       - operations: ["CREATE", "UPDATE"]
         apiGroups: ["*"]

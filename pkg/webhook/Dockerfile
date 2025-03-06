@@ -21,7 +21,6 @@ FROM debian:bullseye-slim
 
 WORKDIR /app
 COPY --from=builder /app/webhook /webhook
-COPY --from=builder /app/certs /certs
 
 USER nonroot:nonroot
 
