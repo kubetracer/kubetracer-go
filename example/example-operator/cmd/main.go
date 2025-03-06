@@ -1,34 +1,23 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
 	"path/filepath"
+	"time"
 
-	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
-	// to ensure that exec-entrypoint and run can make use of them.
-	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -37,11 +26,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	kubetracer "github.com/kubetracer/kubetracer-go/pkg/client"
-	"go.opentelemetry.io/otel"
-
 	examplev1 "github.com/kubebuilder/kubebuilder-go/example/example-operator/api/v1"
 	"github.com/kubebuilder/kubebuilder-go/example/example-operator/internal/controller"
+	kubetracer "github.com/kubetracer/kubetracer-go/pkg/client"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -52,9 +39,38 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
 	utilruntime.Must(examplev1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+func initTracer(ctx context.Context) func() {
+	// Create OTLP HTTP exporter
+	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint("tempo.monitoring.svc.cluster.local:4318"), otlptracehttp.WithInsecure())
+	if err != nil {
+		setupLog.Error(err, "Failed to create exporter")
+		os.Exit(1)
+	}
+
+	// Create trace provider
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("example-service"),
+		)),
+	)
+
+	// Set the global trace provider
+	otel.SetTracerProvider(tp)
+
+	// Return a function to shutdown the tracer provider
+	return func() {
+		ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+		defer cancel()
+		if err := tp.Shutdown(ctx); err != nil {
+			setupLog.Error(err, "Failed to shutdown TracerProvider")
+		}
+	}
 }
 
 // nolint:gocyclo
@@ -67,6 +83,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -84,6 +101,7 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -92,6 +110,10 @@ func main() {
 
 	logger := zap.New(zap.UseFlagOptions(&opts))
 	ctrl.SetLogger(logger)
+
+	ctx := context.Background()
+	shutdownTracer := initTracer(ctx)
+	defer shutdownTracer()
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -127,7 +149,6 @@ func main() {
 			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
 			os.Exit(1)
 		}
-
 		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
 			config.GetCertificate = webhookCertWatcher.GetCertificate
 		})
@@ -176,7 +197,6 @@ func main() {
 			setupLog.Error(err, "to initialize metrics certificate watcher", "error", err)
 			os.Exit(1)
 		}
-
 		metricsServerOptions.TLSOpts = append(metricsServerOptions.TLSOpts, func(config *tls.Config) {
 			config.GetCertificate = metricsCertWatcher.GetCertificate
 		})

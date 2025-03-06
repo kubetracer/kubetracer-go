@@ -4,12 +4,12 @@ metadata:
   labels:
     app.kubernetes.io/name: example-operator
     app.kubernetes.io/managed-by: kustomize
-  name: manager-rolebinding
+  name: example-operator-rolebinding
 roleRef:
-  apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: manager-role
+  name: example-operator-role
+  apiGroup: rbac.authorization.k8s.io
 subjects:
 - kind: ServiceAccount
-  name: controller-manager
-  namespace: system
+  name: example-operator-sa
+  namespace: monitoring
