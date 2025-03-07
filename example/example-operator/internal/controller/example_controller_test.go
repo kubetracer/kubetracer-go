@@ -1,75 +1,63 @@
-/*
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package controller
 
 import (
-	. "github.com/onsi/ginkgo/v2"
-	//. "github.com/onsi/gomega"
+	"context"
+	"testing"
+
+	"github.com/go-logr/logr"
+	v1 "github.com/kubebuilder/kubebuilder-go/example/example-operator/api/v1"
+	kubetracer "github.com/kubetracer/kubetracer-go/pkg/client"
+	"github.com/kubetracer/kubetracer-go/pkg/constants"
+	"go.opentelemetry.io/otel"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-var _ = Describe("Example Controller", func() {
-	Context("When reconciling a resource", func() {
-		// const resourceName = "test-resource"
+func TestReconcile(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	v1.AddToScheme(scheme)
+	corev1.AddToScheme(scheme)
+	ex := &v1.Example{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "fake-example",
+			Namespace: "fake-namespace",
+			Labels: map[string]string{
+				"configName": "example-configName",
+			},
+		},
+		Spec: v1.ExampleSpec{
+			Foo: "bar",
+		},
+	}
 
-		// ctx := context.Background()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ex).WithStatusSubresource(ex).Build()
+	logger := logr.Discard()
+	client := kubetracer.NewTracingClient(fakeClient, otel.Tracer("kubetracer"), logger)
+	er := &ExampleReconciler{
+		Client: client,
+	}
 
-		// typeNamespacedName := types.NamespacedName{
-		// 	Name:      resourceName,
-		// 	Namespace: "default", // TODO(user):Modify as needed
-		// }
-		// example := &examplev1.Example{}
-
-		// BeforeEach(func() {
-		// 	By("creating the custom resource for the Kind Example")
-		// 	err := k8sClient.Get(ctx, typeNamespacedName, example)
-		// 	if err != nil && errors.IsNotFound(err) {
-		// 		resource := &examplev1.Example{
-		// 			ObjectMeta: metav1.ObjectMeta{
-		// 				Name:      resourceName,
-		// 				Namespace: "default",
-		// 			},
-		// 			// TODO(user): Specify other spec details if needed.
-		// 		}
-		// 		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-		// 	}
-		// })
-
-		// AfterEach(func() {
-		// 	// TODO(user): Cleanup logic after each test, like removing the resource instance.
-		// 	resource := &examplev1.Example{}
-		// 	err := k8sClient.Get(ctx, typeNamespacedName, resource)
-		// 	Expect(err).NotTo(HaveOccurred())
-
-		// 	By("Cleanup the specific resource instance Example")
-		// 	Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		// })
-		// It("should successfully reconcile the resource", func() {
-		// 	By("Reconciling the created resource")
-		// 	controllerReconciler := &ExampleReconciler{
-		// 		Client: k8sClient,
-		// 		Scheme: k8sClient.Scheme(),
-		// 	}
-
-		// 	_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-		// 		NamespacedName: typeNamespacedName,
-		// 	})
-		// 	Expect(err).NotTo(HaveOccurred())
-		// 	// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-		// 	// Example: If you expect a certain status condition after reconciliation, verify it here.
-		// })
+	t.Run("test reconcile on example custom resource", func(t *testing.T) {
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fake-example", Namespace: "fake-namespace"}}
+		_, err := er.Reconcile(ctx, req)
+		if err != nil {
+			t.Fatal("failed to reconcile: ", err)
+		}
 	})
-})
+
+	t.Run("testing if traceId is present on the configmap", func(t *testing.T) {
+		cm := &corev1.ConfigMap{}
+		_, err := er.Client.GetWithSpan(ctx, types.NamespacedName{Name: "example-configName", Namespace: "monitoring"}, cm)
+		if err != nil {
+			t.Fatal("no traceId on the configmap")
+		}
+		if _, ok := cm.GetAnnotations()[constants.TraceIDAnnotation]; !ok {
+			t.Fatal("no traceId on the configmap")
+		}
+	})
+}
