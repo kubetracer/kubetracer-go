@@ -14,7 +14,7 @@ import (
 
 // ConfigMapReconciler reconciles a ConfigMap object
 type ConfigMapReconciler struct {
-	Client *kubetracer.TracingClient
+	Client kubetracer.TracingClient
 	Scheme *runtime.Scheme
 }
 

@@ -12,15 +12,24 @@ import (
 )
 
 // TracingClient wraps the Kubernetes client to add tracing functionality
-type TracingClient struct {
+type tracingClient struct {
 	client.Client
-	Tracer trace.Tracer
+	trace.Tracer
 	Logger logr.Logger
 }
 
+type TracingClient interface {
+	client.Client
+	trace.Tracer
+	// We use this to which calls client.Client Get
+	GetWithSpan(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, error)
+}
+
+var _ TracingClient = (*tracingClient)(nil)
+
 // NewTracingClient initializes and returns a new TracingClient
-func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger) *TracingClient {
-	return &TracingClient{
+func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger) TracingClient {
+	return &tracingClient{
 		Client: c,
 		Tracer: t,
 		Logger: l,
@@ -28,7 +37,7 @@ func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger) *TracingCl
 }
 
 // Create adds tracing and traceID annotation around the original client's Create method
-func (tc *TracingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+func (tc *tracingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Create "+obj.GetName())
 	defer span.End()
 
@@ -38,7 +47,7 @@ func (tc *TracingClient) Create(ctx context.Context, obj client.Object, opts ...
 }
 
 // Update adds tracing and traceID annotation around the original client's Update method
-func (tc *TracingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Update "+obj.GetName())
 	defer span.End()
 
@@ -48,9 +57,9 @@ func (tc *TracingClient) Update(ctx context.Context, obj client.Object, opts ...
 }
 
 // Get adds tracing around the original client's Get method
-func (tc *TracingClient) GetWithSpan(ctx context.Context, key client.ObjectKey, obj client.Object) (context.Context, error) {
+func (tc *tracingClient) GetWithSpan(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, error) {
 	// Create or retrieve the span from the context
-	err := tc.Client.Get(ctx, key, obj)
+	err := tc.Client.Get(ctx, key, obj, opts...)
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Get "+key.Name)
 	defer span.End()
 
@@ -59,7 +68,7 @@ func (tc *TracingClient) GetWithSpan(ctx context.Context, key client.ObjectKey, 
 }
 
 // Get adds tracing around the original client's Get method
-func (tc *TracingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
+func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	// Create or retrieve the span from the context
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Get "+key.Name)
 	defer span.End()
@@ -69,7 +78,7 @@ func (tc *TracingClient) Get(ctx context.Context, key client.ObjectKey, obj clie
 }
 
 // Delete adds tracing around the original client's Delete method
-func (tc *TracingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Delete "+obj.GetName())
 	defer span.End()
 
@@ -78,14 +87,14 @@ func (tc *TracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 }
 
 // CreateSpanID generates a new span ID and returns the updated context
-func (tc *TracingClient) CreateSpanID(ctx context.Context, operationName string) context.Context {
+func (tc *tracingClient) CreateSpanID(ctx context.Context, operationName string) context.Context {
 	ctx, span := tc.Tracer.Start(ctx, operationName)
 	defer span.End()
 	return trace.ContextWithSpan(ctx, span)
 }
 
 // startSpanFromContext starts a new span from the context and attaches trace information to the object
-func (tc *TracingClient) startSpanFromContext(ctx context.Context, obj client.Object, operationName string) (context.Context, trace.Span) {
+func (tc *tracingClient) startSpanFromContext(ctx context.Context, obj client.Object, operationName string) (context.Context, trace.Span) {
 	// Check if context already has a trace span
 	span := trace.SpanFromContext(ctx)
 	if span.SpanContext().IsValid() {
@@ -117,7 +126,7 @@ func (tc *TracingClient) startSpanFromContext(ctx context.Context, obj client.Ob
 }
 
 // addTraceIDAnnotation adds the traceID as an annotation to the object
-func (tc *TracingClient) addTraceIDAnnotation(ctx context.Context, obj client.Object) {
+func (tc *tracingClient) addTraceIDAnnotation(ctx context.Context, obj client.Object) {
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 	if traceID != "" {
