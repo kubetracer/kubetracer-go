@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	kubetracer "github.com/kubetracer/kubetracer-go/pkg/client"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -44,7 +45,7 @@ var (
 	cancel    context.CancelFunc
 	testEnv   *envtest.Environment
 	cfg       *rest.Config
-	k8sClient client.Client
+	k8sClient kubetracer.TracingClient
 )
 
 func TestControllers(t *testing.T) {
