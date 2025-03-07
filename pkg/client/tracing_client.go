@@ -50,11 +50,12 @@ func (tc *TracingClient) Update(ctx context.Context, obj client.Object, opts ...
 // Get adds tracing around the original client's Get method
 func (tc *TracingClient) GetWithSpan(ctx context.Context, key client.ObjectKey, obj client.Object) (context.Context, error) {
 	// Create or retrieve the span from the context
+	err := tc.Client.Get(ctx, key, obj)
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Get "+key.Name)
 	defer span.End()
 
 	tc.Logger.Info("Getting object", "object", key.Name)
-	return trace.ContextWithSpan(ctx, span), tc.Client.Get(ctx, key, obj)
+	return trace.ContextWithSpan(ctx, span), err
 }
 
 // Get adds tracing around the original client's Get method

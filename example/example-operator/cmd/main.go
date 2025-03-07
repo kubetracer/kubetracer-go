@@ -249,6 +249,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Example")
 		os.Exit(1)
 	}
+
+	// Add the ConfigMapReconciler
+	if err = (&controller.ConfigMapReconciler{
+		Client: kubetracer.NewTracingClient(mgr.GetClient(), otel.Tracer("kubetracer"), logger),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

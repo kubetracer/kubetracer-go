@@ -51,7 +51,8 @@ type ExampleReconciler struct {
 func (r *ExampleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 	example := &examplev1.Example{}
-	if err := r.Client.Get(ctx, req.NamespacedName, example); err != nil {
+	ctx, err := r.Client.GetWithSpan(ctx, req.NamespacedName, example)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
