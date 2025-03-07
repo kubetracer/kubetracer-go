@@ -9,6 +9,7 @@ import (
 	kubetracer "github.com/kubetracer/kubetracer-go/pkg/client"
 	"github.com/kubetracer/kubetracer-go/pkg/constants"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -50,14 +51,15 @@ func TestReconcile(t *testing.T) {
 		}
 	})
 
-	t.Run("testing if traceId is present on the configmap", func(t *testing.T) {
+	t.Run("testing if traceId is present on the configmap and the traceId from the context", func(t *testing.T) {
 		cm := &corev1.ConfigMap{}
-		_, err := er.Client.GetWithSpan(ctx, types.NamespacedName{Name: "example-configName", Namespace: "monitoring"}, cm)
+		ctx, err := er.Client.GetWithSpan(ctx, types.NamespacedName{Name: "example-configName", Namespace: "monitoring"}, cm)
 		if err != nil {
-			t.Fatal("no traceId on the configmap")
+			t.Fatal("failed to get with span", err)
 		}
-		if _, ok := cm.GetAnnotations()[constants.TraceIDAnnotation]; !ok {
-			t.Fatal("no traceId on the configmap")
+		traceId := trace.SpanFromContext(ctx).SpanContext().TraceID().String()
+		if cm.GetAnnotations()[constants.TraceIDAnnotation] != traceId {
+			t.Fatal("traceIds do not match", cm.GetAnnotations()[constants.TraceIDAnnotation], traceId)
 		}
 	})
 }
