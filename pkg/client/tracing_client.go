@@ -21,6 +21,8 @@ type tracingClient struct {
 type TracingClient interface {
 	client.Client
 	trace.Tracer
+	// We use this to which calls client.Client Get
+	GetWithSpan(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, error)
 }
 
 var _ TracingClient = (*tracingClient)(nil)
@@ -55,9 +57,9 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 }
 
 // Get adds tracing around the original client's Get method
-func (tc *tracingClient) GetWithSpan(ctx context.Context, key client.ObjectKey, obj client.Object) (context.Context, error) {
+func (tc *tracingClient) GetWithSpan(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, error) {
 	// Create or retrieve the span from the context
-	err := tc.Client.Get(ctx, key, obj)
+	err := tc.Client.Get(ctx, key, obj, opts...)
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Get "+key.Name)
 	defer span.End()
 

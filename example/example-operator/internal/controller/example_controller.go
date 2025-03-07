@@ -31,7 +31,7 @@ import (
 
 // ExampleReconciler reconciles a Example object
 type ExampleReconciler struct {
-	Client *kubetracer.TracingClient
+	Client kubetracer.TracingClient
 	Scheme *runtime.Scheme
 }
 
