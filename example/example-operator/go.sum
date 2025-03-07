@@ -96,6 +96,8 @@ github.com/kubetracer/kubetracer-go v0.2.2 h1:uB17xuI34/XrNI049a2ySMfqfrf/vcyVtD
 github.com/kubetracer/kubetracer-go v0.2.2/go.mod h1:HXEDSvc7+mQ7gf81mw6PdNoIUUnLa6zPJmXbeaTxNkE=
 github.com/kubetracer/kubetracer-go v0.2.3 h1:R54JfWJC6BVTvAUrR2cmuFos60JjDRoCzA/jwXScKYw=
 github.com/kubetracer/kubetracer-go v0.2.3/go.mod h1:0D46lpte273E1H9GuWarMyAv5835MCR0N6n8oaeArRE=
+github.com/kubetracer/kubetracer-go v0.2.4 h1:nlih43K0v++t7RM+ueUi5KRVykmGjxfpoTt+TLi0p9E=
+github.com/kubetracer/kubetracer-go v0.2.4/go.mod h1:0D46lpte273E1H9GuWarMyAv5835MCR0N6n8oaeArRE=
 github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0=
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
