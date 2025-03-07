@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: example-operator
     app.kubernetes.io/managed-by: kustomize
-    configName: foobar1
+    configName: foobar2
   name: example-sample
 spec:
   # TODO(user): Add fields here
