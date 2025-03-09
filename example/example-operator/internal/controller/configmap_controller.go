@@ -18,8 +18,8 @@ type ConfigMapReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=create;update;patch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;create;update;patch
 
 // Reconcile function to reconcile ConfigMap and create a corresponding Secret
 func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
