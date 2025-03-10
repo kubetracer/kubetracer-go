@@ -32,7 +32,12 @@ func initTracer() trace.Tracer {
 
 func TestNewTracingClient(t *testing.T) {
 	// Create a fake Kubernetes client
-	k8sClient := fake.NewFakeClient()
+	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}).Build()
 
 	// Create a real tracer
 	tracer := initTracer()
@@ -51,7 +56,12 @@ func TestNewTracingClient(t *testing.T) {
 
 func TestAutomaticAnnotationManagement(t *testing.T) {
 	// Create a fake Kubernetes client
-	k8sClient := fake.NewFakeClient()
+	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}).Build()
 
 	// Create a real tracer
 	tracer := initTracer()
@@ -64,8 +74,10 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	// Initialize the TracingClient
 	tracingClient := NewTracingClient(k8sClient, tracer, logger)
 
+	ctx := context.Background()
+
 	// Create a spanId since no GET is being called to initialize the span
-	ctx := tracingClient.CreateSpanID(context.Background(), "CreateSpanID")
+	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 
@@ -78,7 +90,7 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	}
 
 	// Save the Pod
-	err := tracingClient.Create(ctx, pod)
+	err = tracingClient.Create(ctx, pod)
 	assert.NoError(t, err)
 
 	// Retrieve the Pod and check the annotation
@@ -90,7 +102,12 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 
 func TestChainReactionTracing(t *testing.T) {
 	// Create a fake Kubernetes client
-	k8sClient := fake.NewFakeClient()
+	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}).Build()
 
 	// Create a real tracer
 	tracer := initTracer()
@@ -111,13 +128,15 @@ func TestChainReactionTracing(t *testing.T) {
 		},
 	}
 
+	ctx := context.Background()
+
 	// Create a spanId since no GET is being called to initialize the span
-	ctx := tracingClient.CreateSpanID(context.Background(), "CreateSpanID")
+	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 
 	// Save the initial Pod
-	err := tracingClient.Create(ctx, initialPod)
+	err = tracingClient.Create(ctx, initialPod)
 	assert.NoError(t, err)
 
 	// Create a new TracingClient to simulate a fresh client
