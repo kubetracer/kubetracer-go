@@ -83,6 +83,14 @@ func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj clie
 	return tc.Client.Get(ctx, key, obj)
 }
 
+func (tc *tracingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	ctx, span := startSpanFromContextList(ctx, tc.Logger, tc.Tracer, list, "List ")
+	defer span.End()
+
+	tc.Logger.Info("Getting List")
+	return tc.Client.List(ctx, list, opts...)
+}
+
 // Patch  adds tracing and traceID annotation around the original client's Patch method
 func (tc *tracingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, "Patch "+obj.GetName())
@@ -100,6 +108,15 @@ func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 
 	tc.Logger.Info("Deleting object", "object", obj.GetName())
 	return tc.Client.Delete(ctx, obj, opts...)
+}
+
+func (tc *tracingClient) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, "DeleteAllOf "+obj.GetName())
+	defer span.End()
+
+	tc.Logger.Info("Deleting all of object", "object", obj.GetName())
+	return tc.Client.DeleteAllOf(ctx, obj, opts...)
+
 }
 
 func (tc *tracingClient) Status() client.StatusWriter {
@@ -166,6 +183,22 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 				logger.Error(err, "Invalid trace ID", "traceID", traceID)
 			}
 		}
+	}
+
+	// Create a new span
+	ctx, span = tracer.Start(ctx, operationName)
+	return trace.ContextWithSpan(ctx, span), span
+}
+
+func startSpanFromContextList(ctx context.Context, logger logr.Logger, tracer trace.Tracer, obj client.ObjectList, operationName string) (context.Context, trace.Span) {
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: span.SpanContext().TraceID(),
+		})
+		ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
+		ctx, span = tracer.Start(ctx, operationName)
+		return trace.ContextWithSpan(ctx, span), span
 	}
 
 	// Create a new span
