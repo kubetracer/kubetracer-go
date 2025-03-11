@@ -143,6 +143,15 @@ func TestChainReactionTracing(t *testing.T) {
 	// Extract the trace ID from the retrieved initial pod annotations
 	savedtraceID := retrievedInitialPod.Annotations[constants.TraceIDAnnotation]
 	assert.Equal(t, traceID, savedtraceID)
+
+	t.Run("", func(t *testing.T) {
+		patchPod := client.MergeFrom(retrievedInitialPod.DeepCopy())
+		retrievedInitialPod.Status.Phase = corev1.PodRunning
+		err := newTracingClient.Status().Patch(ctx, retrievedInitialPod, patchPod)
+		assert.NoError(t, err)
+		assert.Equal(t, retrievedInitialPod.Status.Phase, corev1.PodRunning)
+
+	})
 }
 
 func TestUpdateWithTracing(t *testing.T) {
@@ -200,5 +209,63 @@ func TestUpdateWithTracing(t *testing.T) {
 		err = tracingClient.Status().Update(ctx, retrievedPod)
 		assert.NoError(t, err)
 		assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
+	})
+}
+
+func TestPatchWithTracing(t *testing.T) {
+	// Create a fake Kubernetes client
+	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}).Build()
+
+	// Create a real tracer
+	tracer := initTracer()
+
+	// Create a logger
+	logger := logr.Discard()
+
+	// Initialize the TracingClient
+	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+
+	ctx := context.Background()
+	// Create a spanId since no GET is being called to initialize the span
+	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	assert.NoError(t, err)
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID().String()
+
+	// Create a Pod with an annotation
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+	}
+
+	// Save the Pod
+	err = tracingClient.Create(ctx, pod)
+	assert.NoError(t, err)
+
+	// Patch the Pod
+	podPatch := client.MergeFrom(pod.DeepCopy())
+	pod.Labels = map[string]string{"updated": "true"}
+	err = tracingClient.Patch(ctx, pod, podPatch)
+	assert.NoError(t, err)
+
+	// Retrieve the Pod and check the annotation
+	retrievedPod := &corev1.Pod{}
+	err = tracingClient.Get(ctx, client.ObjectKey{Name: "test-pod", Namespace: "default"}, retrievedPod)
+	assert.NoError(t, err)
+	assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
+	assert.Equal(t, "true", retrievedPod.Labels["updated"])
+
+	t.Run("status create with tracing", func(t *testing.T) {
+		err := tracingClient.Status().Create(ctx, retrievedPod, retrievedPod)
+		// fakeClient does not support Create for subresoruce Client
+		// https://github.com/kubernetes-sigs/controller-runtime/blob/v0.20.3/pkg/client/fake/client.go#L1227
+		assert.Error(t, err)
 	})
 }
