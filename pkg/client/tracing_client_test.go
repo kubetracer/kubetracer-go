@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/go-logr/logr/funcr"
+	"github.com/go-logr/logr"
 	"github.com/kubetracer/kubetracer-go/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel"
@@ -43,10 +43,7 @@ func TestNewTracingClient(t *testing.T) {
 	tracer := initTracer()
 
 	// Create a logger
-	logger := funcr.New(func(prefix, args string) {
-		println(prefix + ": " + args)
-	}, funcr.Options{})
-
+	logger := logr.Discard()
 	// Initialize the TracingClient
 	tracingClient := NewTracingClient(k8sClient, tracer, logger)
 
@@ -67,10 +64,7 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	tracer := initTracer()
 
 	// Create a logger
-	logger := funcr.New(func(prefix, args string) {
-		println(prefix + ": " + args)
-	}, funcr.Options{})
-
+	logger := logr.Discard()
 	// Initialize the TracingClient
 	tracingClient := NewTracingClient(k8sClient, tracer, logger)
 
@@ -113,9 +107,7 @@ func TestChainReactionTracing(t *testing.T) {
 	tracer := initTracer()
 
 	// Create a logger
-	logger := funcr.New(func(prefix, args string) {
-		println(prefix + ": " + args)
-	}, funcr.Options{})
+	logger := logr.Discard()
 
 	// Initialize the TracingClient
 	tracingClient := NewTracingClient(k8sClient, tracer, logger)
@@ -140,7 +132,7 @@ func TestChainReactionTracing(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Create a new TracingClient to simulate a fresh client
-	newK8sClient := fake.NewFakeClient(initialPod)
+	newK8sClient := fake.NewClientBuilder().WithObjects(initialPod).Build()
 	newTracingClient := NewTracingClient(newK8sClient, tracer, logger)
 
 	// Retrieve the initial Pod to get the trace ID
@@ -166,9 +158,7 @@ func TestUpdateWithTracing(t *testing.T) {
 	tracer := initTracer()
 
 	// Create a logger
-	logger := funcr.New(func(prefix, args string) {
-		println(prefix + ": " + args)
-	}, funcr.Options{})
+	logger := logr.Discard()
 
 	// Initialize the TracingClient
 	tracingClient := NewTracingClient(k8sClient, tracer, logger)
@@ -203,4 +193,12 @@ func TestUpdateWithTracing(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
 	assert.Equal(t, "true", retrievedPod.Labels["updated"])
+
+	// Test status udpate with tracing
+	t.Run("update status with tracing", func(t *testing.T) {
+		pod.Status.Phase = corev1.PodRunning
+		err = tracingClient.Status().Update(ctx, retrievedPod)
+		assert.NoError(t, err)
+		assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
+	})
 }
