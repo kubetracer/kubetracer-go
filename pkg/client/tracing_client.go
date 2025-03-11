@@ -18,6 +18,12 @@ type tracingClient struct {
 	Logger logr.Logger
 }
 
+type tracingStatusClient struct {
+	client.StatusWriter
+	trace.Tracer
+	Logger logr.Logger
+}
+
 type TracingClient interface {
 	client.Client
 	trace.Tracer
@@ -26,6 +32,7 @@ type TracingClient interface {
 }
 
 var _ TracingClient = (*tracingClient)(nil)
+var _ client.StatusWriter = (*tracingStatusClient)(nil)
 
 // NewTracingClient initializes and returns a new TracingClient
 func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger) TracingClient {
@@ -41,7 +48,7 @@ func (tc *tracingClient) Create(ctx context.Context, obj client.Object, opts ...
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Create "+obj.GetName())
 	defer span.End()
 
-	tc.addTraceIDAnnotation(ctx, obj)
+	addTraceIDAnnotation(ctx, obj)
 	tc.Logger.Info("Creating object", "object", obj.GetName())
 	return tc.Client.Create(ctx, obj, opts...)
 }
@@ -51,7 +58,7 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Update "+obj.GetName())
 	defer span.End()
 
-	tc.addTraceIDAnnotation(ctx, obj)
+	addTraceIDAnnotation(ctx, obj)
 	tc.Logger.Info("Updating object", "object", obj.GetName())
 	return tc.Client.Update(ctx, obj, opts...)
 }
@@ -77,6 +84,16 @@ func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj clie
 	return tc.Client.Get(ctx, key, obj)
 }
 
+// Patch  adds tracing and traceID annotation around the original client's Patch method
+func (tc *tracingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	ctx, span := tc.startSpanFromContext(ctx, obj, "Patch "+obj.GetName())
+	defer span.End()
+
+	addTraceIDAnnotation(ctx, obj)
+	tc.Logger.Info("Patching object", "object", obj.GetName())
+	return tc.Client.Patch(ctx, obj, patch, opts...)
+}
+
 // Delete adds tracing around the original client's Delete method
 func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
 	ctx, span := tc.startSpanFromContext(ctx, obj, "Delete "+obj.GetName())
@@ -86,11 +103,74 @@ func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 	return tc.Client.Delete(ctx, obj, opts...)
 }
 
+func (tc *tracingClient) Status() client.StatusWriter {
+	return &tracingStatusClient{
+		Logger:       tc.Logger,
+		StatusWriter: tc.Client.Status(),
+		Tracer:       tc.Tracer,
+	}
+}
+
+func (ts *tracingStatusClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, "StatusUpdate "+obj.GetName())
+	defer span.End()
+
+	addTraceIDAnnotation(ctx, obj)
+	ts.Logger.Info("updating object", "object", obj.GetName())
+	return ts.StatusWriter.Update(ctx, obj, opts...)
+}
+
+func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, "StatusPatch "+obj.GetName())
+	defer span.End()
+
+	addTraceIDAnnotation(ctx, obj)
+	return ts.StatusWriter.Patch(ctx, obj, patch, opts...)
+}
+
+func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, "StatusCreate "+obj.GetName())
+	defer span.End()
+
+	addTraceIDAnnotation(ctx, obj)
+	return ts.StatusWriter.Create(ctx, obj, subResource, opts...)
+}
+
 // CreateSpanID generates a new span ID and returns the updated context
 func (tc *tracingClient) CreateSpanID(ctx context.Context, operationName string) context.Context {
 	ctx, span := tc.Tracer.Start(ctx, operationName)
 	defer span.End()
 	return trace.ContextWithSpan(ctx, span)
+}
+
+func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.Tracer, obj client.Object, operationName string) (context.Context, trace.Span) {
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: span.SpanContext().TraceID(),
+		})
+		ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
+		ctx, span = tracer.Start(ctx, operationName)
+		return trace.ContextWithSpan(ctx, span), span
+	}
+
+	if !span.SpanContext().IsValid() {
+		// No valid trace ID in context, check object annotations
+		if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
+			if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
+				spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+					TraceID: traceIDValue,
+				})
+				ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
+			} else {
+				logger.Error(err, "Invalid trace ID", "traceID", traceID)
+			}
+		}
+	}
+
+	// Create a new span
+	ctx, span = tracer.Start(ctx, operationName)
+	return trace.ContextWithSpan(ctx, span), span
 }
 
 // startSpanFromContext starts a new span from the context and attaches trace information to the object
@@ -126,7 +206,7 @@ func (tc *tracingClient) startSpanFromContext(ctx context.Context, obj client.Ob
 }
 
 // addTraceIDAnnotation adds the traceID as an annotation to the object
-func (tc *tracingClient) addTraceIDAnnotation(ctx context.Context, obj client.Object) {
+func addTraceIDAnnotation(ctx context.Context, obj client.Object) {
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 	if traceID != "" {
