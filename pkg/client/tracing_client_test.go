@@ -269,3 +269,110 @@ func TestPatchWithTracing(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestListWithTracing(t *testing.T) {
+	// Create a fake Kubernetes client
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}
+	k8sClient := fake.NewClientBuilder().WithObjects(pod).Build()
+
+	// Create a real tracer
+	tracer := initTracer()
+
+	// Create a logger
+	logger := logr.Discard()
+
+	// Initialize the TracingClient
+	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+
+	ctx := context.Background()
+	// Create a spanId since no GET is being called to initialize the span
+	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	assert.NoError(t, err)
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID().String()
+
+	// Retrieve the Pod and check the annotation
+	retrievedPod := &corev1.PodList{}
+	err = tracingClient.List(ctx, retrievedPod)
+	assert.NoError(t, err)
+	span = trace.SpanFromContext(ctx)
+	traceID = span.SpanContext().TraceID().String()
+	assert.NotEmpty(t, traceID)
+
+}
+
+func TestDeleteWithTracing(t *testing.T) {
+	// Create a fake Kubernetes client
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}
+	k8sClient := fake.NewClientBuilder().WithObjects(pod).Build()
+
+	// Create a real tracer
+	tracer := initTracer()
+
+	// Create a logger
+	logger := logr.Discard()
+
+	// Initialize the TracingClient
+	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+
+	ctx := context.Background()
+	// Create a spanId since no GET is being called to initialize the span
+	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	assert.NoError(t, err)
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID().String()
+
+	// Retrieve the Pod and check the annotation
+	err = tracingClient.Delete(ctx, pod)
+	assert.NoError(t, err)
+	span = trace.SpanFromContext(ctx)
+	traceID = span.SpanContext().TraceID().String()
+	assert.NotEmpty(t, traceID)
+
+}
+
+func TestDeleteAllOfWithTracing(t *testing.T) {
+	// Create a fake Kubernetes client
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}
+	k8sClient := fake.NewClientBuilder().WithObjects(pod).Build()
+
+	// Create a real tracer
+	tracer := initTracer()
+
+	// Create a logger
+	logger := logr.Discard()
+
+	// Initialize the TracingClient
+	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+
+	ctx := context.Background()
+	// Create a spanId since no GET is being called to initialize the span
+	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	assert.NoError(t, err)
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID().String()
+
+	// Retrieve the Pod and check the annotation
+	retrievedPod := &corev1.Pod{}
+	err = tracingClient.DeleteAllOf(ctx, retrievedPod)
+	assert.NoError(t, err)
+	span = trace.SpanFromContext(ctx)
+	traceID = span.SpanContext().TraceID().String()
+	assert.NotEmpty(t, traceID)
+
+}
