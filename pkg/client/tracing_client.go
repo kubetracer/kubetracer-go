@@ -4,21 +4,25 @@ import (
 	"context"
 	"fmt"
 
-	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
-
 	"github.com/go-logr/logr"
+	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
 // TracingClient wraps the Kubernetes client to add tracing functionality
 type tracingClient struct {
+	scheme *runtime.Scheme
 	client.Client
 	trace.Tracer
 	Logger logr.Logger
 }
 
 type tracingStatusClient struct {
+	scheme *runtime.Scheme
 	client.StatusWriter
 	trace.Tracer
 	Logger logr.Logger
@@ -36,8 +40,15 @@ var _ TracingClient = (*tracingClient)(nil)
 var _ client.StatusWriter = (*tracingStatusClient)(nil)
 
 // NewTracingClient initializes and returns a new TracingClient
-func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger) TracingClient {
+// optional scheme.  If not, it will use client-go scheme
+func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger, scheme ...*runtime.Scheme) TracingClient {
+	tracingScheme := clientgoscheme.Scheme
+	if len(scheme) > 0 {
+		tracingScheme = scheme[0]
+	}
+
 	return &tracingClient{
+		scheme: tracingScheme,
 		Client: c,
 		Tracer: t,
 		Logger: l,
@@ -46,7 +57,13 @@ func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger) TracingCli
 
 // Create adds tracing and traceID annotation around the original client's Create method
 func (tc *tracingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Create %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Create %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -56,7 +73,14 @@ func (tc *tracingClient) Create(ctx context.Context, obj client.Object, opts ...
 
 // Update adds tracing and traceID annotation around the original client's Update method
 func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Update %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Update %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -112,7 +136,14 @@ func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts .
 // Get adds tracing around the original client's Get method
 func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	// Create or retrieve the span from the context
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Get %s %s", obj.GetObjectKind().GroupVersionKind().Kind, key.Name))
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Get %s %s", kind, key.Name))
 	defer span.End()
 
 	tc.Logger.Info("Getting object", "object", key.Name)
@@ -129,7 +160,14 @@ func (tc *tracingClient) List(ctx context.Context, list client.ObjectList, opts 
 
 // Patch  adds tracing and traceID annotation around the original client's Patch method
 func (tc *tracingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Patch %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Patch %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -139,7 +177,14 @@ func (tc *tracingClient) Patch(ctx context.Context, obj client.Object, patch cli
 
 // Delete adds tracing around the original client's Delete method
 func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Delete %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Delete %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	tc.Logger.Info("Deleting object", "object", obj.GetName())
@@ -147,7 +192,14 @@ func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 }
 
 func (tc *tracingClient) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("DeleteAllOf %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("DeleteAllOf %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	tc.Logger.Info("Deleting all of object", "object", obj.GetName())
@@ -157,6 +209,7 @@ func (tc *tracingClient) DeleteAllOf(ctx context.Context, obj client.Object, opt
 
 func (tc *tracingClient) Status() client.StatusWriter {
 	return &tracingStatusClient{
+		scheme:       tc.scheme,
 		Logger:       tc.Logger,
 		StatusWriter: tc.Client.Status(),
 		Tracer:       tc.Tracer,
@@ -164,7 +217,14 @@ func (tc *tracingClient) Status() client.StatusWriter {
 }
 
 func (ts *tracingStatusClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusUpdate %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, ts.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusUpdate %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -173,7 +233,14 @@ func (ts *tracingStatusClient) Update(ctx context.Context, obj client.Object, op
 }
 
 func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusPatch %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, ts.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusPatch %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -181,7 +248,14 @@ func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, pat
 }
 
 func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusCreate %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	gvk, err := apiutil.GVKForObject(obj, ts.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	kind := gvk.GroupKind().Kind
+
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusCreate %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
