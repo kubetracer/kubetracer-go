@@ -22,8 +22,10 @@ func (IgnoreTraceAnnotationUpdatePredicate) Update(e event.UpdateEvent) bool {
 
 	// remove the traceid and resource version from both old and new objects
 	delete(e.ObjectOld.GetAnnotations(), constants.TraceIDAnnotation)
+	delete(e.ObjectOld.GetAnnotations(), constants.SpanIDAnnotation)
 	delete(e.ObjectOld.GetAnnotations(), constants.ResourceVersionKey)
 	delete(e.ObjectNew.GetAnnotations(), constants.TraceIDAnnotation)
+	delete(e.ObjectOld.GetAnnotations(), constants.SpanIDAnnotation)
 	delete(e.ObjectNew.GetAnnotations(), constants.ResourceVersionKey)
 
 	// Check if the spec or status have changed
