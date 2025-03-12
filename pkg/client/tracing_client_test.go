@@ -71,8 +71,10 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a spanId since no GET is being called to initialize the span
-	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
-	span := trace.SpanFromContext(ctx)
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
+
+	assert.NoError(t, err)
 	traceID := span.SpanContext().TraceID().String()
 	spanID := span.SpanContext().SpanID().String()
 
@@ -126,8 +128,10 @@ func TestChainReactionTracing(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a spanId since no GET is being called to initialize the span
-	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
-	span := trace.SpanFromContext(ctx)
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
+
+	assert.NoError(t, err)
 	traceID := span.SpanContext().TraceID().String()
 	spanID := span.SpanContext().SpanID().String()
 
@@ -185,9 +189,10 @@ func TestUpdateWithTracing(t *testing.T) {
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
-	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
+
 	assert.NoError(t, err)
-	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 	spanID := span.SpanContext().SpanID().String()
 
@@ -246,9 +251,10 @@ func TestPatchWithTracing(t *testing.T) {
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
-	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
+
 	assert.NoError(t, err)
-	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 	spanID := span.SpanContext().SpanID().String()
 
@@ -287,6 +293,71 @@ func TestPatchWithTracing(t *testing.T) {
 	})
 }
 
+func TestEndTrace(t *testing.T) {
+	// Create a fake Kubernetes client
+	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}).Build()
+
+	// Create a real tracer
+	tracer := initTracer()
+
+	// Create a logger
+	logger := logr.Discard()
+
+	// Initialize the TracingClient
+	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+
+	ctx := context.Background()
+	// Create a spanId since no GET is being called to initialize the span
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
+
+	assert.NoError(t, err)
+	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
+
+	// Create a Pod with an annotation
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+	}
+
+	// Save the Pod
+	err = tracingClient.Create(ctx, pod)
+	assert.NoError(t, err)
+
+	// Patch the Pod
+	podPatch := client.MergeFrom(pod.DeepCopy())
+	pod.Labels = map[string]string{"updated": "true"}
+	err = tracingClient.Patch(ctx, pod, podPatch)
+	assert.NoError(t, err)
+
+	// Retrieve the Pod and check the annotation
+	retrievedPod := &corev1.Pod{}
+	err = tracingClient.Get(ctx, client.ObjectKey{Name: "test-pod", Namespace: "default"}, retrievedPod)
+	assert.NoError(t, err)
+	assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
+	assert.Equal(t, "true", retrievedPod.Labels["updated"])
+	assert.NotEqual(t, spanID, retrievedPod.Annotations[constants.SpanIDAnnotation])
+	assert.Equal(t, len(spanID), len(retrievedPod.Annotations[constants.SpanIDAnnotation]))
+
+	// Test EndTrace
+	err = tracingClient.EndTrace(ctx, retrievedPod)
+	assert.NoError(t, err)
+	finalPod := &corev1.Pod{}
+	// Get the pod with default kubernetes client to ensure that there is no traceID and spanID
+	err = k8sClient.Get(ctx, client.ObjectKey{Name: "test-pod", Namespace: "default"}, finalPod)
+	assert.NoError(t, err)
+	assert.Empty(t, finalPod.Annotations[constants.TraceIDAnnotation])
+	assert.Empty(t, finalPod.Annotations[constants.SpanIDAnnotation])
+}
+
 func TestListWithTracing(t *testing.T) {
 	// Create a fake Kubernetes client
 	pod := &corev1.Pod{
@@ -308,14 +379,15 @@ func TestListWithTracing(t *testing.T) {
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
-	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
 	assert.NoError(t, err)
 
 	// Retrieve the Pod and check the annotation
 	retrievedPod := &corev1.PodList{}
 	err = tracingClient.List(ctx, retrievedPod)
 	assert.NoError(t, err)
-	span := trace.SpanFromContext(ctx)
+	span = trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 	assert.NotEmpty(t, traceID)
 
@@ -342,9 +414,9 @@ func TestDeleteWithTracing(t *testing.T) {
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
-	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
 	assert.NoError(t, err)
-	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 
 	// Retrieve the Pod and check the annotation
@@ -353,7 +425,6 @@ func TestDeleteWithTracing(t *testing.T) {
 	span = trace.SpanFromContext(ctx)
 	traceID = span.SpanContext().TraceID().String()
 	assert.NotEmpty(t, traceID)
-
 }
 
 func TestDeleteAllOfWithTracing(t *testing.T) {
@@ -377,9 +448,9 @@ func TestDeleteAllOfWithTracing(t *testing.T) {
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
-	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	ctx, span, err := tracingClient.StartTrace(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
+	defer span.End()
 	assert.NoError(t, err)
-	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
 
 	// Retrieve the Pod and check the annotation
