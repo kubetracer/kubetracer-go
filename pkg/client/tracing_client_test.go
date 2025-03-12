@@ -74,6 +74,7 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
 
 	// Create a Pod with an annotation
 	pod := &corev1.Pod{
@@ -92,6 +93,8 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	err = tracingClient.Get(ctx, client.ObjectKey{Name: "test-pod", Namespace: "default"}, retrievedPod)
 	assert.NoError(t, err)
 	assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
+	assert.NotEqual(t, spanID, retrievedPod.Annotations[constants.SpanIDAnnotation])
+	assert.Equal(t, len(spanID), len(retrievedPod.Annotations[constants.SpanIDAnnotation]))
 }
 
 func TestChainReactionTracing(t *testing.T) {
@@ -126,6 +129,7 @@ func TestChainReactionTracing(t *testing.T) {
 	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
 
 	// Save the initial Pod
 	err = tracingClient.Create(ctx, initialPod)
@@ -142,7 +146,9 @@ func TestChainReactionTracing(t *testing.T) {
 
 	// Extract the trace ID from the retrieved initial pod annotations
 	savedtraceID := retrievedInitialPod.Annotations[constants.TraceIDAnnotation]
+	savedSpanID := retrievedInitialPod.Annotations[constants.SpanIDAnnotation]
 	assert.Equal(t, traceID, savedtraceID)
+	assert.NotEqual(t, spanID, savedSpanID)
 
 	t.Run("", func(t *testing.T) {
 		patchPod := client.MergeFrom(retrievedInitialPod.DeepCopy())
@@ -150,7 +156,12 @@ func TestChainReactionTracing(t *testing.T) {
 		err := newTracingClient.Status().Patch(ctx, retrievedInitialPod, patchPod)
 		assert.NoError(t, err)
 		assert.Equal(t, retrievedInitialPod.Status.Phase, corev1.PodRunning)
-
+		retrievedPatchedPod := &corev1.Pod{}
+		err = newTracingClient.Get(ctx, client.ObjectKey{Name: "initial-pod", Namespace: "default"}, retrievedPatchedPod)
+		assert.NoError(t, err)
+		assert.Equal(t, savedtraceID, retrievedPatchedPod.Annotations[constants.TraceIDAnnotation])
+		//Annotations will not be patched with Status.Patch
+		assert.Equal(t, savedSpanID, retrievedPatchedPod.Annotations[constants.SpanIDAnnotation])
 	})
 }
 
@@ -178,6 +189,7 @@ func TestUpdateWithTracing(t *testing.T) {
 	assert.NoError(t, err)
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
 
 	// Create a Pod with an annotation
 	pod := &corev1.Pod{
@@ -202,6 +214,8 @@ func TestUpdateWithTracing(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
 	assert.Equal(t, "true", retrievedPod.Labels["updated"])
+	assert.NotEqual(t, spanID, retrievedPod.Annotations[constants.SpanIDAnnotation])
+	assert.Equal(t, len(spanID), len(retrievedPod.Annotations[constants.SpanIDAnnotation]))
 
 	// Test status udpate with tracing
 	t.Run("update status with tracing", func(t *testing.T) {
@@ -236,6 +250,7 @@ func TestPatchWithTracing(t *testing.T) {
 	assert.NoError(t, err)
 	span := trace.SpanFromContext(ctx)
 	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
 
 	// Create a Pod with an annotation
 	pod := &corev1.Pod{
@@ -261,6 +276,8 @@ func TestPatchWithTracing(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, traceID, retrievedPod.Annotations[constants.TraceIDAnnotation])
 	assert.Equal(t, "true", retrievedPod.Labels["updated"])
+	assert.NotEqual(t, spanID, retrievedPod.Annotations[constants.SpanIDAnnotation])
+	assert.Equal(t, len(spanID), len(retrievedPod.Annotations[constants.SpanIDAnnotation]))
 
 	t.Run("status create with tracing", func(t *testing.T) {
 		err := tracingClient.Status().Create(ctx, retrievedPod, retrievedPod)
@@ -293,15 +310,13 @@ func TestListWithTracing(t *testing.T) {
 	// Create a spanId since no GET is being called to initialize the span
 	ctx, err := tracingClient.GetWithSpan(ctx, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
 	assert.NoError(t, err)
-	span := trace.SpanFromContext(ctx)
-	traceID := span.SpanContext().TraceID().String()
 
 	// Retrieve the Pod and check the annotation
 	retrievedPod := &corev1.PodList{}
 	err = tracingClient.List(ctx, retrievedPod)
 	assert.NoError(t, err)
-	span = trace.SpanFromContext(ctx)
-	traceID = span.SpanContext().TraceID().String()
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID().String()
 	assert.NotEmpty(t, traceID)
 
 }

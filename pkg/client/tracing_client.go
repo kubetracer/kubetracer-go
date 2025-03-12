@@ -177,6 +177,7 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 	if span.SpanContext().IsValid() {
 		spanContext := trace.NewSpanContext(trace.SpanContextConfig{
 			TraceID: span.SpanContext().TraceID(),
+			SpanID:  span.SpanContext().SpanID(),
 		})
 		ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
 		ctx, span = tracer.Start(ctx, operationName)
@@ -187,9 +188,19 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 		// No valid trace ID in context, check object annotations
 		if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
 			if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
-				spanContext := trace.NewSpanContext(trace.SpanContextConfig{
-					TraceID: traceIDValue,
-				})
+				spanContext := trace.NewSpanContext(trace.SpanContextConfig{})
+				if spanID, ok := obj.GetAnnotations()[constants.SpanIDAnnotation]; ok {
+					if spanIDValue, err := trace.SpanIDFromHex(spanID); err == nil {
+						spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+							TraceID: traceIDValue,
+							SpanID:  spanIDValue,
+						})
+					} else {
+						spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+							TraceID: traceIDValue,
+						})
+					}
+				}
 				ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
 			} else {
 				logger.Error(err, "Invalid trace ID", "traceID", traceID)
@@ -228,6 +239,15 @@ func addTraceIDAnnotation(ctx context.Context, obj client.Object) {
 		}
 		annotations := obj.GetAnnotations()
 		annotations[constants.TraceIDAnnotation] = traceID
+		obj.SetAnnotations(annotations)
+	}
+	spanID := span.SpanContext().SpanID().String()
+	if spanID != "" {
+		if obj.GetAnnotations() == nil {
+			obj.SetAnnotations(map[string]string{})
+		}
+		annotations := obj.GetAnnotations()
+		annotations[constants.SpanIDAnnotation] = spanID
 		obj.SetAnnotations(annotations)
 	}
 }
