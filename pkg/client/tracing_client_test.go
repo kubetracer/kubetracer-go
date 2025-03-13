@@ -99,6 +99,37 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	assert.Equal(t, len(spanID), len(retrievedPod.Annotations[constants.SpanIDAnnotation]))
 }
 
+func TestPassingTraceIdInNamespacedName(t *testing.T) {
+	// Create a fake Kubernetes client
+	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}).Build()
+
+	// Create a real tracer
+	tracer := initTracer()
+
+	// Create a logger
+	logger := logr.Discard()
+	// Initialize the TracingClient
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
+
+	ctx := context.Background()
+
+	key := client.ObjectKey{Name: "f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;pre-test-pod", Namespace: "default"}
+
+	// Create a spanId since no GET is being called to initialize the span
+	_, span, err := tracingClient.StartTrace(ctx, key, &corev1.Pod{})
+	defer span.End()
+
+	assert.NoError(t, err)
+	traceID := span.SpanContext().TraceID().String()
+
+	assert.Equal(t, "f620f5cad0af940c294f980c5366a6a1", traceID)
+}
+
 func TestChainReactionTracing(t *testing.T) {
 	// Create a fake Kubernetes client
 	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{

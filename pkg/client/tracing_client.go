@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
@@ -35,6 +36,8 @@ type TracingClient interface {
 	// We use this to which calls client.Client Get
 	StartTrace(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, trace.Span, error)
 	EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) (client.Object, error)
+	StartSpan(ctx context.Context, operationName string) (context.Context, trace.Span)
+	EmbedTraceIDInNamespacedName(key client.ObjectKey, obj client.Object) error
 }
 
 var _ TracingClient = (*tracingClient)(nil)
@@ -70,7 +73,12 @@ func (tc *tracingClient) Create(ctx context.Context, obj client.Object, opts ...
 
 	addTraceIDAnnotation(ctx, obj)
 	tc.Logger.Info("Creating object", "object", obj.GetName())
-	return tc.Client.Create(ctx, obj, opts...)
+	err = tc.Client.Create(ctx, obj, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+
+	return err
 }
 
 // Update adds tracing and traceID annotation around the original client's Update method
@@ -87,15 +95,44 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 
 	addTraceIDAnnotation(ctx, obj)
 	tc.Logger.Info("Updating object", "object", obj.GetName())
-	return tc.Client.Update(ctx, obj, opts...)
+
+	err = tc.Client.Update(ctx, obj, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+
+	return err
+}
+
+func (tc *tracingClient) StartSpan(ctx context.Context, operationName string) (context.Context, trace.Span) {
+	return startSpanFromContext(ctx, tc.Logger, tc.Tracer, nil, operationName)
+}
+
+// EmbedTraceIDInNamespacedName embeds the traceID and spanID in the key.Name
+func (tc *tracingClient) EmbedTraceIDInNamespacedName(key client.ObjectKey, obj client.Object) error {
+	traceID := obj.GetAnnotations()[constants.TraceIDAnnotation]
+	spanID := obj.GetAnnotations()[constants.SpanIDAnnotation]
+	if traceID == "" || spanID == "" {
+		return nil
+	}
+
+	key.Name = fmt.Sprintf("%s;%s;%s", traceID, spanID, key.Name)
+	return nil
 }
 
 // Get adds tracing around the original client's Get method
 // IMPORTANT: Caller MUST call `defer span.End()` to end the trace from the calling function
 func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, trace.Span, error) {
+	initialKey := client.ObjectKey{Name: getNameFromNamespacedName(key), Namespace: key.Namespace}
+
 	// Create or retrieve the span from the context
-	err := tc.Reader.Get(ctx, key, obj, opts...)
+	err := tc.Reader.Get(ctx, initialKey, obj, opts...)
+	overrideTraceIDFromNamespacedName(key, obj)
 	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("StartTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, key.Name))
+
+	if err != nil {
+		span.RecordError(err)
+	}
 
 	tc.Logger.Info("Getting object", "object", key.Name)
 	return trace.ContextWithSpan(ctx, span), span, err
@@ -113,11 +150,16 @@ func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts .
 
 	// get the current object and ensure that current object has the expected traceid and spanid annotations
 	currentObjFromServer := obj.DeepCopyObject().(client.Object)
-	tc.Reader.Get(ctx, client.ObjectKeyFromObject(obj), currentObjFromServer)
+	err := tc.Reader.Get(ctx, client.ObjectKeyFromObject(obj), currentObjFromServer)
+
+	if err != nil {
+		span.RecordError(err)
+	}
 
 	// compare the traceid and spanid from currentobj to ensure that the traceid and spanid are not changed
 	if currentObjFromServer.GetAnnotations()[constants.TraceIDAnnotation] != obj.GetAnnotations()[constants.TraceIDAnnotation] {
 		tc.Logger.Info("TraceID has changed, skipping patch", "object", obj.GetName())
+		span.RecordError(fmt.Errorf("TraceID has changed, skipping patch: object %s", obj.GetName()))
 		return obj, nil
 	}
 
@@ -131,7 +173,14 @@ func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts .
 
 	tc.Logger.Info("Patching object", "object", obj.GetName())
 	// Use the Patch function to apply the patch
-	return obj, tc.Client.Patch(ctx, obj, patch, opts...)
+
+	err = tc.Client.Patch(ctx, obj, patch, opts...)
+
+	if err != nil {
+		span.RecordError(err)
+	}
+
+	return obj, err
 }
 
 // Get adds tracing around the original client's Get method
@@ -148,7 +197,14 @@ func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj clie
 	defer span.End()
 
 	tc.Logger.Info("Getting object", "object", key.Name)
-	return tc.Client.Get(ctx, key, obj)
+
+	err = tc.Client.Get(ctx, key, obj, opts...)
+
+	if err != nil {
+		span.RecordError(err)
+	}
+
+	return err
 }
 
 func (tc *tracingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
@@ -156,7 +212,11 @@ func (tc *tracingClient) List(ctx context.Context, list client.ObjectList, opts 
 	defer span.End()
 
 	tc.Logger.Info("Getting List")
-	return tc.Client.List(ctx, list, opts...)
+	err := tc.Client.List(ctx, list, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return err
 }
 
 // Patch  adds tracing and traceID annotation around the original client's Patch method
@@ -173,7 +233,12 @@ func (tc *tracingClient) Patch(ctx context.Context, obj client.Object, patch cli
 
 	addTraceIDAnnotation(ctx, obj)
 	tc.Logger.Info("Patching object", "object", obj.GetName())
-	return tc.Client.Patch(ctx, obj, patch, opts...)
+	err = tc.Client.Patch(ctx, obj, patch, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+
+	return err
 }
 
 // Delete adds tracing around the original client's Delete method
@@ -189,7 +254,11 @@ func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 	defer span.End()
 
 	tc.Logger.Info("Deleting object", "object", obj.GetName())
-	return tc.Client.Delete(ctx, obj, opts...)
+	err = tc.Client.Delete(ctx, obj, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return err
 }
 
 func (tc *tracingClient) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
@@ -204,7 +273,11 @@ func (tc *tracingClient) DeleteAllOf(ctx context.Context, obj client.Object, opt
 	defer span.End()
 
 	tc.Logger.Info("Deleting all of object", "object", obj.GetName())
-	return tc.Client.DeleteAllOf(ctx, obj, opts...)
+	err = tc.Client.DeleteAllOf(ctx, obj, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return err
 
 }
 
@@ -230,7 +303,11 @@ func (ts *tracingStatusClient) Update(ctx context.Context, obj client.Object, op
 
 	addTraceIDAnnotation(ctx, obj)
 	ts.Logger.Info("updating object", "object", obj.GetName())
-	return ts.StatusWriter.Update(ctx, obj, opts...)
+	err = ts.StatusWriter.Update(ctx, obj, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return err
 }
 
 func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
@@ -245,7 +322,12 @@ func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, pat
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
-	return ts.StatusWriter.Patch(ctx, obj, patch, opts...)
+	err = ts.StatusWriter.Patch(ctx, obj, patch, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+
+	return err
 }
 
 func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
@@ -260,7 +342,11 @@ func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, su
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
-	return ts.StatusWriter.Create(ctx, obj, subResource, opts...)
+	err = ts.StatusWriter.Create(ctx, obj, subResource, opts...)
+	if err != nil {
+		span.RecordError(err)
+	}
+	return err
 }
 
 // startSpanFromContext starts a new span from the context and attaches trace information to the object
@@ -273,7 +359,7 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 		})
 		ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
 		ctx, span = tracer.Start(ctx, operationName)
-		return trace.ContextWithSpan(ctx, span), span
+		return ctx, span
 	}
 
 	if !span.SpanContext().IsValid() {
@@ -302,7 +388,40 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 
 	// Create a new span
 	ctx, span = tracer.Start(ctx, operationName)
-	return trace.ContextWithSpan(ctx, span), span
+	return ctx, span
+}
+
+func getNameFromNamespacedName(key client.ObjectKey) string {
+	// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;default-pod
+	// this will return the corrected key.name
+	keyNameParts := strings.Split(key.Name, ";")
+	if len(keyNameParts) != 3 {
+		return key.Name
+	}
+	return keyNameParts[2]
+}
+
+func overrideTraceIDFromNamespacedName(key client.ObjectKey, obj client.Object) error {
+	// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;default-pod
+	// then we can extract the traceID and spanID from the key.Name
+	// and override the traceID and spanID in the object annotations
+
+	keyNameParts := strings.Split(key.Name, ";")
+	if len(keyNameParts) != 3 {
+		return nil
+	}
+
+	traceID := keyNameParts[0]
+	spanID := keyNameParts[1]
+
+	if obj.GetAnnotations() == nil {
+		obj.SetAnnotations(map[string]string{})
+	}
+	annotations := obj.GetAnnotations()
+	annotations[constants.TraceIDAnnotation] = traceID
+	annotations[constants.SpanIDAnnotation] = spanID
+	obj.SetAnnotations(annotations)
+	return nil
 }
 
 func startSpanFromContextList(ctx context.Context, logger logr.Logger, tracer trace.Tracer, obj client.ObjectList, operationName string) (context.Context, trace.Span) {
@@ -319,7 +438,7 @@ func startSpanFromContextList(ctx context.Context, logger logr.Logger, tracer tr
 
 	// Create a new span
 	ctx, span = tracer.Start(ctx, operationName)
-	return trace.ContextWithSpan(ctx, span), span
+	return ctx, span
 }
 
 // addTraceIDAnnotation adds the traceID as an annotation to the object
