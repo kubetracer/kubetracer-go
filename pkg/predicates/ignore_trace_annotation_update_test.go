@@ -17,20 +17,22 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 	oldPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				constants.TraceIDAnnotation:  "old-trace-id",
-				constants.ResourceVersionKey: "old-resource-version",
-				"key1":                       "value1",
+				constants.TraceIDAnnotation: "old-trace-id",
+				constants.SpanIDAnnotation:  "old-span-id",
+				"key1":                      "value1",
 			},
+			ResourceVersion: "old-resource-version",
 		},
 	}
 
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				constants.TraceIDAnnotation:  "new-trace-id",
-				constants.ResourceVersionKey: "new-resource-version",
-				"key1":                       "value1",
+				constants.TraceIDAnnotation: "new-trace-id",
+				constants.SpanIDAnnotation:  "new-span-id",
+				"key1":                      "value1",
 			},
+			ResourceVersion: "new-resource-version",
 		},
 	}
 
