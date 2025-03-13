@@ -34,7 +34,7 @@ type TracingClient interface {
 	trace.Tracer
 	// We use this to which calls client.Client Get
 	StartTrace(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, trace.Span, error)
-	EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) error
+	EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) (client.Object, error)
 }
 
 var _ TracingClient = (*tracingClient)(nil)
@@ -102,13 +102,13 @@ func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, o
 }
 
 // Ends the trace by clearing the traceid from the object
-func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) error {
+func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) (client.Object, error) {
 	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("EndTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
 	defer span.End()
 
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
-		return nil
+		return obj, nil
 	}
 
 	// get the current object and ensure that current object has the expected traceid and spanid annotations
@@ -119,7 +119,7 @@ func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts .
 	if currentObjFromServer.GetAnnotations()[constants.TraceIDAnnotation] != obj.GetAnnotations()[constants.TraceIDAnnotation] ||
 		currentObjFromServer.GetAnnotations()[constants.SpanIDAnnotation] != obj.GetAnnotations()[constants.SpanIDAnnotation] {
 		tc.Logger.Info("TraceID or SpanID has changed, skipping patch", "object", obj.GetName())
-		return nil
+		return obj, nil
 	}
 
 	// Remove the traceid and spanid annotations and create a patch
@@ -132,7 +132,7 @@ func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts .
 
 	tc.Logger.Info("Patching object", "object", obj.GetName())
 	// Use the Patch function to apply the patch
-	return tc.Client.Patch(ctx, obj, patch, opts...)
+	return obj, tc.Client.Patch(ctx, obj, patch, opts...)
 }
 
 // Get adds tracing around the original client's Get method
