@@ -17,6 +17,7 @@ import (
 type tracingClient struct {
 	scheme *runtime.Scheme
 	client.Client
+	client.Reader
 	trace.Tracer
 	Logger logr.Logger
 }
@@ -41,7 +42,7 @@ var _ client.StatusWriter = (*tracingStatusClient)(nil)
 
 // NewTracingClient initializes and returns a new TracingClient
 // optional scheme.  If not, it will use client-go scheme
-func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger, scheme ...*runtime.Scheme) TracingClient {
+func NewTracingClient(c client.Client, r client.Reader, t trace.Tracer, l logr.Logger, scheme ...*runtime.Scheme) TracingClient {
 	tracingScheme := clientgoscheme.Scheme
 	if len(scheme) > 0 {
 		tracingScheme = scheme[0]
@@ -50,6 +51,7 @@ func NewTracingClient(c client.Client, t trace.Tracer, l logr.Logger, scheme ...
 	return &tracingClient{
 		scheme: tracingScheme,
 		Client: c,
+		Reader: r,
 		Tracer: t,
 		Logger: l,
 	}
@@ -92,7 +94,7 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 // IMPORTANT: Caller MUST call `defer span.End()` to end the trace from the calling function
 func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, trace.Span, error) {
 	// Create or retrieve the span from the context
-	err := tc.Client.Get(ctx, key, obj, opts...)
+	err := tc.Reader.Get(ctx, key, obj, opts...)
 	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("StartTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, key.Name))
 
 	tc.Logger.Info("Getting object", "object", key.Name)

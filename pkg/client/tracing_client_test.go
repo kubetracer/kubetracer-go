@@ -45,7 +45,7 @@ func TestNewTracingClient(t *testing.T) {
 	// Create a logger
 	logger := logr.Discard()
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	// Check if the client is not nil
 	assert.NotNil(t, tracingClient)
@@ -66,7 +66,7 @@ func TestAutomaticAnnotationManagement(t *testing.T) {
 	// Create a logger
 	logger := logr.Discard()
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 
@@ -115,7 +115,7 @@ func TestChainReactionTracing(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	// Create an initial Pod
 	initialPod := &corev1.Pod{
@@ -141,7 +141,7 @@ func TestChainReactionTracing(t *testing.T) {
 
 	// Create a new TracingClient to simulate a fresh client
 	newK8sClient := fake.NewClientBuilder().WithObjects(initialPod).Build()
-	newTracingClient := NewTracingClient(newK8sClient, tracer, logger)
+	newTracingClient := NewTracingClient(newK8sClient, newK8sClient, tracer, logger)
 
 	// Retrieve the initial Pod to get the trace ID
 	retrievedInitialPod := &corev1.Pod{}
@@ -185,7 +185,7 @@ func TestUpdateWithTracing(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
@@ -247,7 +247,7 @@ func TestPatchWithTracing(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
@@ -309,7 +309,7 @@ func TestEndTrace(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
@@ -374,7 +374,7 @@ func TestEndTraceChangedAnnotation(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
@@ -413,7 +413,7 @@ func TestEndTraceChangedAnnotation(t *testing.T) {
 	assert.Equal(t, len(spanID), len(retrievedPod.Annotations[constants.SpanIDAnnotation]))
 
 	// Initialize the TracingClient
-	tracingClientNew := NewTracingClient(k8sClient, tracer, logger)
+	tracingClientNew := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 	ctxNew := context.Background()
 	ctxNew, spanNew, errNew := tracingClientNew.StartTrace(ctxNew, client.ObjectKey{Name: "pre-test-pod", Namespace: "default"}, &corev1.Pod{})
 	defer spanNew.End()
@@ -451,7 +451,7 @@ func TestListWithTracing(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
@@ -486,7 +486,7 @@ func TestDeleteWithTracing(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
@@ -520,7 +520,7 @@ func TestDeleteAllOfWithTracing(t *testing.T) {
 	logger := logr.Discard()
 
 	// Initialize the TracingClient
-	tracingClient := NewTracingClient(k8sClient, tracer, logger)
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
 
 	ctx := context.Background()
 	// Create a spanId since no GET is being called to initialize the span
