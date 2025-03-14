@@ -3,6 +3,8 @@ package predicates
 import (
 	"reflect"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -20,16 +22,29 @@ func (IgnoreTraceAnnotationUpdatePredicate) Update(e event.UpdateEvent) bool {
 		return true
 	}
 
-	// remove the traceid and resource version from both old and new objects
-	delete(e.ObjectOld.GetAnnotations(), constants.TraceIDAnnotation)
-	delete(e.ObjectOld.GetAnnotations(), constants.SpanIDAnnotation)
-	e.ObjectOld.SetResourceVersion("")
-	delete(e.ObjectNew.GetAnnotations(), constants.TraceIDAnnotation)
-	delete(e.ObjectNew.GetAnnotations(), constants.SpanIDAnnotation)
-	e.ObjectNew.SetResourceVersion("")
+	// Perform deep copies to avoid concurrent map writes issues
+	oldObjCopy := e.ObjectOld.DeepCopyObject().(runtime.Object)
+	newObjCopy := e.ObjectNew.DeepCopyObject().(runtime.Object)
+
+	// Remove the traceid and resource version from both old and new objects
+	annotationsOld, err := meta.NewAccessor().Annotations(oldObjCopy)
+	if err == nil {
+		delete(annotationsOld, constants.TraceIDAnnotation)
+		delete(annotationsOld, constants.SpanIDAnnotation)
+	}
+	meta.NewAccessor().SetAnnotations(oldObjCopy, annotationsOld)
+	meta.NewAccessor().SetResourceVersion(oldObjCopy, "")
+
+	annotationsNew, err := meta.NewAccessor().Annotations(newObjCopy)
+	if err == nil {
+		delete(annotationsNew, constants.TraceIDAnnotation)
+		delete(annotationsNew, constants.SpanIDAnnotation)
+	}
+	meta.NewAccessor().SetAnnotations(newObjCopy, annotationsNew)
+	meta.NewAccessor().SetResourceVersion(newObjCopy, "")
 
 	// Check if the spec or status have changed
-	if !reflect.DeepEqual(e.ObjectOld.DeepCopyObject(), e.ObjectNew.DeepCopyObject()) {
+	if !reflect.DeepEqual(oldObjCopy, newObjCopy) {
 		return true
 	}
 
