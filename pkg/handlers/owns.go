@@ -195,7 +195,7 @@ func (e *enqueueRequestForOwner[object]) getOwnerReconcileRequest(obj metav1.Obj
 				return
 			}
 			if mapping.Scope.Name() != meta.RESTScopeNameRoot {
-				request.NamespacedName.Name = obj.GetNamespace()
+				request.NamespacedName.Namespace = obj.GetNamespace()
 			}
 
 			traceId := obj.GetAnnotations()[constants.TraceIDAnnotation]
