@@ -51,6 +51,38 @@ func TestNewTracingClient(t *testing.T) {
 	assert.NotNil(t, tracingClient)
 }
 
+func TestEmbedTraceIDInNamespacedName(t *testing.T) {
+	// Set up the tracingClient
+	tracingClient := &tracingClient{
+		Logger: logr.Discard(),
+	}
+
+	// Mock object with traceID and spanID annotations
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+			Annotations: map[string]string{
+				constants.TraceIDAnnotation: "1234",
+				constants.SpanIDAnnotation:  "5678",
+			},
+		},
+	}
+
+	// Set up a client.ObjectKey
+	key := client.ObjectKey{Name: "test-pod", Namespace: "default"}
+
+	// Call the function
+	err := tracingClient.EmbedTraceIDInNamespacedName(&key, pod)
+
+	// Assert no error
+	assert.NoError(t, err)
+
+	// Assert the name has been updated correctly
+	expectedName := "1234;5678;test-pod"
+	assert.Equal(t, expectedName, key.Name)
+}
+
 func TestAutomaticAnnotationManagement(t *testing.T) {
 	// Create a fake Kubernetes client
 	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{

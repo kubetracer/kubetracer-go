@@ -37,7 +37,7 @@ type TracingClient interface {
 	StartTrace(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, trace.Span, error)
 	EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) (client.Object, error)
 	StartSpan(ctx context.Context, operationName string) (context.Context, trace.Span)
-	EmbedTraceIDInNamespacedName(key client.ObjectKey, obj client.Object) error
+	EmbedTraceIDInNamespacedName(key *client.ObjectKey, obj client.Object) error
 }
 
 var _ TracingClient = (*tracingClient)(nil)
@@ -109,7 +109,7 @@ func (tc *tracingClient) StartSpan(ctx context.Context, operationName string) (c
 }
 
 // EmbedTraceIDInNamespacedName embeds the traceID and spanID in the key.Name
-func (tc *tracingClient) EmbedTraceIDInNamespacedName(key client.ObjectKey, obj client.Object) error {
+func (tc *tracingClient) EmbedTraceIDInNamespacedName(key *client.ObjectKey, obj client.Object) error {
 	traceID := obj.GetAnnotations()[constants.TraceIDAnnotation]
 	spanID := obj.GetAnnotations()[constants.SpanIDAnnotation]
 	if traceID == "" || spanID == "" {
