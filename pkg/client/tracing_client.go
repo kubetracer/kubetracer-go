@@ -117,6 +117,7 @@ func (tc *tracingClient) EmbedTraceIDInNamespacedName(key *client.ObjectKey, obj
 	}
 
 	key.Name = fmt.Sprintf("%s;%s;%s", traceID, spanID, key.Name)
+	tc.Logger.Info("EmbedTraceIDInNamespacedName", "objectName", key.Name)
 	return nil
 }
 
