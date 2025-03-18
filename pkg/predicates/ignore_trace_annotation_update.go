@@ -26,6 +26,7 @@ func (IgnoreTraceAnnotationUpdatePredicate) Update(e event.UpdateEvent) bool {
 
 	traceIDChanged := oldAnnotations[constants.TraceIDAnnotation] != newAnnotations[constants.TraceIDAnnotation]
 	spanIDChanged := oldAnnotations[constants.SpanIDAnnotation] != newAnnotations[constants.SpanIDAnnotation]
+	resourceGenerationChanged := e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
 	resourceVersionChanged := e.ObjectOld.GetResourceVersion() != e.ObjectNew.GetResourceVersion()
 	otherAnnotationsChanged := !equalExcept(oldAnnotations, newAnnotations, constants.TraceIDAnnotation, constants.SpanIDAnnotation)
 
@@ -33,7 +34,7 @@ func (IgnoreTraceAnnotationUpdatePredicate) Update(e event.UpdateEvent) bool {
 	specOrStatusChanged := hasSpecOrStatusChanged(e.ObjectOld, e.ObjectNew)
 
 	// If only trace ID, span ID, or resource version changed, and no other annotations, spec or status changed, ignore the update
-	if (traceIDChanged || spanIDChanged || resourceVersionChanged) && !otherAnnotationsChanged && !specOrStatusChanged {
+	if (traceIDChanged || spanIDChanged || resourceVersionChanged || resourceGenerationChanged) && !otherAnnotationsChanged && !specOrStatusChanged {
 		return false
 	}
 
@@ -50,7 +51,23 @@ func hasSpecOrStatusChanged(oldObj, newObj runtime.Object) bool {
 	replaceEmptyStructsAndSlicesWithNil(oldUnstructured)
 	replaceEmptyStructsAndSlicesWithNil(newUnstructured)
 
-	return hasFieldChanged(oldUnstructured, newUnstructured, "spec") || hasFieldChanged(oldUnstructured, newUnstructured, "status")
+	oldStatus := getFieldExcludingObservedGeneration(oldUnstructured, "status")
+	newStatus := getFieldExcludingObservedGeneration(newUnstructured, "status")
+
+	return hasFieldChanged(oldUnstructured, newUnstructured, "spec") || !equality.Semantic.DeepEqual(oldStatus, newStatus)
+}
+
+// getFieldExcludingObservedGeneration retrieves the field and excludes the observedGeneration.
+func getFieldExcludingObservedGeneration(obj map[string]interface{}, field string) interface{} {
+	status, found, err := unstructured.NestedFieldNoCopy(obj, field)
+	if err != nil || !found {
+		return nil
+	}
+	if statusMap, ok := status.(map[string]interface{}); ok {
+		delete(statusMap, "observedGeneration")
+		return statusMap
+	}
+	return status
 }
 
 // hasFieldChanged checks if a specific field has changed between old and new unstructured objects.
@@ -81,7 +98,6 @@ func equalExcept(a, b map[string]string, keysToIgnore ...string) bool {
 			}
 		}
 	}
-
 	for key := range b {
 		if _, exists := a[key]; !exists {
 			if _, isIgnored := ignored[key]; !isIgnored {
@@ -89,7 +105,6 @@ func equalExcept(a, b map[string]string, keysToIgnore ...string) bool {
 			}
 		}
 	}
-
 	return true
 }
 

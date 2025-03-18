@@ -6,6 +6,7 @@ import (
 	"github.com/kubetracer/kubetracer-go/pkg/constants"
 	"github.com/kubetracer/kubetracer-go/pkg/predicates"
 	"github.com/stretchr/testify/assert"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -60,6 +61,7 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 					constants.SpanIDAnnotation:  "old-span-id",
 					"key1":                      "value1",
 				},
+				Generation:      1,
 				ResourceVersion: "old-resource-version",
 			},
 		}
@@ -71,6 +73,7 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 					constants.SpanIDAnnotation:  "old-span-id",
 					"key1":                      "new-value",
 				},
+				Generation:      2,
 				ResourceVersion: "new-resource-version",
 			},
 		}
@@ -136,5 +139,35 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 
 		result := pred.Update(updateEvent)
 		assert.True(t, result, "Expected update to be processed when status changes")
+	})
+
+	t.Run("deployment resource generation changed", func(t *testing.T) {
+		oldDeployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Generation: 1,
+			},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration: 1,
+				Replicas:           1,
+			},
+		}
+
+		newDeployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Generation: 2, // Simulate a change in resource generation
+			},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration: 1, // Ignored field
+				Replicas:           1,
+			},
+		}
+
+		updateEvent := event.UpdateEvent{
+			ObjectOld: oldDeployment,
+			ObjectNew: newDeployment,
+		}
+
+		result := pred.Update(updateEvent)
+		assert.False(t, result, "Expected update to be ignored when only the resource generation changes")
 	})
 }
