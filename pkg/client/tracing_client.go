@@ -209,10 +209,12 @@ func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj clie
 }
 
 func (tc *tracingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	ctx, span := startSpanFromContextList(ctx, tc.Logger, tc.Tracer, list, fmt.Sprintf("List %s", list.GetObjectKind().GroupVersionKind().Kind))
+	gvk, _ := apiutil.GVKForObject(list, tc.scheme)
+	kind := gvk.GroupKind().Kind
+	ctx, span := startSpanFromContextList(ctx, tc.Logger, tc.Tracer, list, kind)
 	defer span.End()
 
-	tc.Logger.Info("Getting List")
+	tc.Logger.Info("Getting List", "object", kind)
 	err := tc.Client.List(ctx, list, opts...)
 	if err != nil {
 		span.RecordError(err)

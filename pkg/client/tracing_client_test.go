@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/testr"
 	"github.com/kubetracer/kubetracer-go/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel"
@@ -541,7 +542,7 @@ func TestListWithTracing(t *testing.T) {
 	tracer := initTracer()
 
 	// Create a logger
-	logger := logr.Discard()
+	logger := testr.New(t)
 
 	// Initialize the TracingClient
 	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
