@@ -1,16 +1,16 @@
 package predicates
 
 import (
-	"github.com/google/go-cmp/cmp"
 	"github.com/kubetracer/kubetracer-go/pkg/constants"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// IgnoreTraceAnnotationUpdatePredicate implements a predicate that ignores updates where only the
-// trace ID and span ID annotations, or resource version changes.
+// IgnoreTraceAnnotationUpdatePredicate implements a predicate that ignores updates
+// where only the trace ID and span ID annotations, or resource version changes.
 type IgnoreTraceAnnotationUpdatePredicate struct {
 	predicate.Funcs
 }
@@ -30,11 +30,10 @@ func (IgnoreTraceAnnotationUpdatePredicate) Update(e event.UpdateEvent) bool {
 	otherAnnotationsChanged := !equalExcept(oldAnnotations, newAnnotations, constants.TraceIDAnnotation, constants.SpanIDAnnotation)
 
 	// Check if the spec or status fields have changed
-	specChanged := hasSpecChanged(e.ObjectOld, e.ObjectNew)
-	statusChanged := hasStatusChanged(e.ObjectOld, e.ObjectNew)
+	specOrStatusChanged := hasSpecOrStatusChanged(e.ObjectOld, e.ObjectNew)
 
 	// If only trace ID, span ID, or resource version changed, and no other annotations, spec or status changed, ignore the update
-	if (traceIDChanged || spanIDChanged || resourceVersionChanged) && !otherAnnotationsChanged && !specChanged && !statusChanged {
+	if (traceIDChanged || spanIDChanged || resourceVersionChanged) && !otherAnnotationsChanged && !specOrStatusChanged {
 		return false
 	}
 
@@ -42,26 +41,35 @@ func (IgnoreTraceAnnotationUpdatePredicate) Update(e event.UpdateEvent) bool {
 	return true
 }
 
-// Helper functions to check if spec or status have changed:
-func hasSpecChanged(oldObj, newObj runtime.Object) bool {
+// hasSpecOrStatusChanged checks if the spec or status fields have changed.
+func hasSpecOrStatusChanged(oldObj, newObj runtime.Object) bool {
 	oldUnstructured := objToUnstructured(oldObj)
 	newUnstructured := objToUnstructured(newObj)
-	oldSpec, foundOld, _ := unstructuredNestedFieldCopy(oldUnstructured, "spec")
-	newSpec, foundNew, _ := unstructuredNestedFieldCopy(newUnstructured, "spec")
-	return foundOld != foundNew || !cmp.Equal(oldSpec, newSpec)
+
+	// Replace empty structs or slices with nil
+	replaceEmptyStructsAndSlicesWithNil(oldUnstructured)
+	replaceEmptyStructsAndSlicesWithNil(newUnstructured)
+
+	return hasFieldChanged(oldUnstructured, newUnstructured, "spec") || hasFieldChanged(oldUnstructured, newUnstructured, "status")
 }
 
-func hasStatusChanged(oldObj, newObj runtime.Object) bool {
-	oldUnstructured := objToUnstructured(oldObj)
-	newUnstructured := objToUnstructured(newObj)
-	oldStatus, foundOld, _ := unstructuredNestedFieldCopy(oldUnstructured, "status")
-	newStatus, foundNew, _ := unstructuredNestedFieldCopy(newUnstructured, "status")
-	return foundOld != foundNew || !cmp.Equal(oldStatus, newStatus)
+// hasFieldChanged checks if a specific field has changed between old and new unstructured objects.
+func hasFieldChanged(oldUnstructured, newUnstructured map[string]interface{}, field string) bool {
+	oldField, foundOld, errOld := unstructuredNestedFieldNoCopy(oldUnstructured, field)
+	newField, foundNew, errNew := unstructuredNestedFieldNoCopy(newUnstructured, field)
+
+	// If there was an error accessing the field, or if one found and the other not found
+	if errOld != nil || errNew != nil || foundOld != foundNew {
+		return true
+	}
+
+	// Check if the fields are semantically equal
+	return !equality.Semantic.DeepEqual(oldField, newField)
 }
 
-// Checks if two maps are equal, ignoring certain keys
+// Checks if two maps are equal, ignoring certain keys.
 func equalExcept(a, b map[string]string, keysToIgnore ...string) bool {
-	ignored := map[string]struct{}{}
+	ignored := make(map[string]struct{})
 	for _, key := range keysToIgnore {
 		ignored[key] = struct{}{}
 	}
@@ -85,13 +93,46 @@ func equalExcept(a, b map[string]string, keysToIgnore ...string) bool {
 	return true
 }
 
+// Recursively replaces empty structs or slices in the map with nil.
+func replaceEmptyStructsAndSlicesWithNil(m map[string]interface{}) {
+	for k, v := range m {
+		switch val := v.(type) {
+		case map[string]interface{}:
+			if len(val) == 0 {
+				m[k] = nil
+			} else {
+				replaceEmptyStructsAndSlicesWithNil(val)
+			}
+		case []interface{}:
+			if len(val) == 0 {
+				m[k] = nil
+			} else {
+				allElementsEmpty := true
+				for _, elem := range val {
+					if elemMap, ok := elem.(map[string]interface{}); ok {
+						replaceEmptyStructsAndSlicesWithNil(elemMap)
+						if len(elemMap) > 0 {
+							allElementsEmpty = false
+						}
+					} else {
+						allElementsEmpty = false
+					}
+				}
+				if allElementsEmpty {
+					m[k] = nil
+				}
+			}
+		}
+	}
+}
+
 func objToUnstructured(obj runtime.Object) map[string]interface{} {
 	unstructuredMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 	return unstructuredMap
 }
 
-func unstructuredNestedFieldCopy(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
-	val, found, err := unstructured.NestedFieldCopy(obj, fields...)
+func unstructuredNestedFieldNoCopy(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+	val, found, err := unstructured.NestedFieldNoCopy(obj, fields...)
 	if !found || err != nil {
 		return nil, false, err
 	}
