@@ -23,6 +23,9 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 			},
 			ResourceVersion: "old-resource-version",
 		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{},
+		},
 	}
 
 	newPod := &corev1.Pod{
@@ -33,6 +36,9 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 				"key1":                      "value1",
 			},
 			ResourceVersion: "new-resource-version",
+		},
+		Spec: corev1.PodSpec{
+			Containers: nil,
 		},
 	}
 

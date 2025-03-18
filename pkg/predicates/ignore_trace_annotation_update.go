@@ -1,16 +1,16 @@
 package predicates
 
 import (
-	"reflect"
-
-	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
+	"github.com/google/go-cmp/cmp"
+	"github.com/kubetracer/kubetracer-go/pkg/constants"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// IgnoreTraceAnnotationUpdatePredicate implements a predicate that ignores updates where only the trace ID and span ID annotations, or resource version changes.
+// IgnoreTraceAnnotationUpdatePredicate implements a predicate that ignores updates where only the
+// trace ID and span ID annotations, or resource version changes.
 type IgnoreTraceAnnotationUpdatePredicate struct {
 	predicate.Funcs
 }
@@ -48,7 +48,7 @@ func hasSpecChanged(oldObj, newObj runtime.Object) bool {
 	newUnstructured := objToUnstructured(newObj)
 	oldSpec, foundOld, _ := unstructuredNestedFieldCopy(oldUnstructured, "spec")
 	newSpec, foundNew, _ := unstructuredNestedFieldCopy(newUnstructured, "spec")
-	return foundOld != foundNew || !reflect.DeepEqual(oldSpec, newSpec)
+	return foundOld != foundNew || !cmp.Equal(oldSpec, newSpec)
 }
 
 func hasStatusChanged(oldObj, newObj runtime.Object) bool {
@@ -56,7 +56,7 @@ func hasStatusChanged(oldObj, newObj runtime.Object) bool {
 	newUnstructured := objToUnstructured(newObj)
 	oldStatus, foundOld, _ := unstructuredNestedFieldCopy(oldUnstructured, "status")
 	newStatus, foundNew, _ := unstructuredNestedFieldCopy(newUnstructured, "status")
-	return foundOld != foundNew || !reflect.DeepEqual(oldStatus, newStatus)
+	return foundOld != foundNew || !cmp.Equal(oldStatus, newStatus)
 }
 
 // Checks if two maps are equal, ignoring certain keys
