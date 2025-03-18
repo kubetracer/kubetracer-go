@@ -294,6 +294,36 @@ func TestUpdateWithTracing(t *testing.T) {
 	})
 }
 
+func TestStartSpan(t *testing.T) {
+	// Create a fake Kubernetes client
+	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pre-test-pod",
+			Namespace: "default",
+		},
+	}).Build()
+
+	// Create a real tracer
+	tracer := initTracer()
+
+	// Create a logger
+	logger := logr.Discard()
+
+	// Initialize the TracingClient
+	tracingClient := NewTracingClient(k8sClient, k8sClient, tracer, logger)
+
+	ctx := context.Background()
+	// Create a spanId since no GET is being called to initialize the span
+	_, span := tracingClient.StartSpan(ctx, "test-span")
+	defer span.End()
+
+	traceID := span.SpanContext().TraceID().String()
+	spanID := span.SpanContext().SpanID().String()
+
+	assert.NotEmpty(t, traceID)
+	assert.NotEmpty(t, spanID)
+}
+
 func TestPatchWithTracing(t *testing.T) {
 	// Create a fake Kubernetes client
 	k8sClient := fake.NewClientBuilder().WithObjects(&corev1.Pod{

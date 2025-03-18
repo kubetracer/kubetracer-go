@@ -364,25 +364,27 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 	}
 
 	if !span.SpanContext().IsValid() {
-		// No valid trace ID in context, check object annotations
-		if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
-			if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
-				spanContext := trace.NewSpanContext(trace.SpanContextConfig{})
-				if spanID, ok := obj.GetAnnotations()[constants.SpanIDAnnotation]; ok {
-					if spanIDValue, err := trace.SpanIDFromHex(spanID); err == nil {
-						spanContext = trace.NewSpanContext(trace.SpanContextConfig{
-							TraceID: traceIDValue,
-							SpanID:  spanIDValue,
-						})
-					} else {
-						spanContext = trace.NewSpanContext(trace.SpanContextConfig{
-							TraceID: traceIDValue,
-						})
+		if obj != nil {
+			// No valid trace ID in context, check object annotations
+			if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
+				if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
+					spanContext := trace.NewSpanContext(trace.SpanContextConfig{})
+					if spanID, ok := obj.GetAnnotations()[constants.SpanIDAnnotation]; ok {
+						if spanIDValue, err := trace.SpanIDFromHex(spanID); err == nil {
+							spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+								TraceID: traceIDValue,
+								SpanID:  spanIDValue,
+							})
+						} else {
+							spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+								TraceID: traceIDValue,
+							})
+						}
 					}
+					ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
+				} else {
+					logger.Error(err, "Invalid trace ID", "traceID", traceID)
 				}
-				ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
-			} else {
-				logger.Error(err, "Invalid trace ID", "traceID", traceID)
 			}
 		}
 	}
