@@ -3,15 +3,14 @@ package predicates
 import (
 	"reflect"
 
-	"k8s.io/apimachinery/pkg/api/meta"
+	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-
-	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
 )
 
-// IgnoreTraceAnnotationUpdatePredicate implements a predicate that ignores updates where only the trace ID annotation changes.
+// IgnoreTraceAnnotationUpdatePredicate implements a predicate that ignores updates where only the trace ID and span ID annotations, or resource version changes.
 type IgnoreTraceAnnotationUpdatePredicate struct {
 	predicate.Funcs
 }
@@ -22,32 +21,79 @@ func (IgnoreTraceAnnotationUpdatePredicate) Update(e event.UpdateEvent) bool {
 		return true
 	}
 
-	// Perform deep copies to avoid concurrent map writes issues
-	oldObjCopy := e.ObjectOld.DeepCopyObject().(runtime.Object)
-	newObjCopy := e.ObjectNew.DeepCopyObject().(runtime.Object)
+	oldAnnotations := e.ObjectOld.GetAnnotations()
+	newAnnotations := e.ObjectNew.GetAnnotations()
 
-	// Remove the traceid and resource version from both old and new objects
-	annotationsOld, err := meta.NewAccessor().Annotations(oldObjCopy)
-	if err == nil {
-		delete(annotationsOld, constants.TraceIDAnnotation)
-		delete(annotationsOld, constants.SpanIDAnnotation)
-	}
-	meta.NewAccessor().SetAnnotations(oldObjCopy, annotationsOld)
-	meta.NewAccessor().SetResourceVersion(oldObjCopy, "")
+	traceIDChanged := oldAnnotations[constants.TraceIDAnnotation] != newAnnotations[constants.TraceIDAnnotation]
+	spanIDChanged := oldAnnotations[constants.SpanIDAnnotation] != newAnnotations[constants.SpanIDAnnotation]
+	resourceVersionChanged := e.ObjectOld.GetResourceVersion() != e.ObjectNew.GetResourceVersion()
+	otherAnnotationsChanged := !equalExcept(oldAnnotations, newAnnotations, constants.TraceIDAnnotation, constants.SpanIDAnnotation)
 
-	annotationsNew, err := meta.NewAccessor().Annotations(newObjCopy)
-	if err == nil {
-		delete(annotationsNew, constants.TraceIDAnnotation)
-		delete(annotationsNew, constants.SpanIDAnnotation)
-	}
-	meta.NewAccessor().SetAnnotations(newObjCopy, annotationsNew)
-	meta.NewAccessor().SetResourceVersion(newObjCopy, "")
+	// Check if the spec or status fields have changed
+	specChanged := hasSpecChanged(e.ObjectOld, e.ObjectNew)
+	statusChanged := hasStatusChanged(e.ObjectOld, e.ObjectNew)
 
-	// Check if the spec or status have changed
-	if !reflect.DeepEqual(oldObjCopy, newObjCopy) {
-		return true
+	// If only trace ID, span ID, or resource version changed, and no other annotations, spec or status changed, ignore the update
+	if (traceIDChanged || spanIDChanged || resourceVersionChanged) && !otherAnnotationsChanged && !specChanged && !statusChanged {
+		return false
 	}
 
-	// If we reach here, the only change was the trace ID annotation
-	return false
+	// Otherwise, indicate the update should be processed
+	return true
+}
+
+// Helper functions to check if spec or status have changed:
+func hasSpecChanged(oldObj, newObj runtime.Object) bool {
+	oldUnstructured := objToUnstructured(oldObj)
+	newUnstructured := objToUnstructured(newObj)
+	oldSpec, foundOld, _ := unstructuredNestedFieldCopy(oldUnstructured, "spec")
+	newSpec, foundNew, _ := unstructuredNestedFieldCopy(newUnstructured, "spec")
+	return foundOld != foundNew || !reflect.DeepEqual(oldSpec, newSpec)
+}
+
+func hasStatusChanged(oldObj, newObj runtime.Object) bool {
+	oldUnstructured := objToUnstructured(oldObj)
+	newUnstructured := objToUnstructured(newObj)
+	oldStatus, foundOld, _ := unstructuredNestedFieldCopy(oldUnstructured, "status")
+	newStatus, foundNew, _ := unstructuredNestedFieldCopy(newUnstructured, "status")
+	return foundOld != foundNew || !reflect.DeepEqual(oldStatus, newStatus)
+}
+
+// Checks if two maps are equal, ignoring certain keys
+func equalExcept(a, b map[string]string, keysToIgnore ...string) bool {
+	ignored := map[string]struct{}{}
+	for _, key := range keysToIgnore {
+		ignored[key] = struct{}{}
+	}
+
+	for key, aValue := range a {
+		if _, isIgnored := ignored[key]; !isIgnored {
+			if bValue, exists := b[key]; !exists || aValue != bValue {
+				return false
+			}
+		}
+	}
+
+	for key := range b {
+		if _, exists := a[key]; !exists {
+			if _, isIgnored := ignored[key]; !isIgnored {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func objToUnstructured(obj runtime.Object) map[string]interface{} {
+	unstructuredMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	return unstructuredMap
+}
+
+func unstructuredNestedFieldCopy(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+	val, found, err := unstructured.NestedFieldCopy(obj, fields...)
+	if !found || err != nil {
+		return nil, false, err
+	}
+	return val, true, nil
 }
