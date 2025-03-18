@@ -1,9 +1,10 @@
-package predicates
+package predicates_test
 
 import (
 	"testing"
 
 	"github.com/kubetracer/kubetracer-go/pkg/constants"
+	"github.com/kubetracer/kubetracer-go/pkg/predicates"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -11,88 +12,129 @@ import (
 )
 
 func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
-	pred := IgnoreTraceAnnotationUpdatePredicate{}
+	pred := predicates.IgnoreTraceAnnotationUpdatePredicate{}
 
-	// Test case: Only trace ID and resource version annotations changed
-	oldPod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				constants.TraceIDAnnotation: "old-trace-id",
-				constants.SpanIDAnnotation:  "old-span-id",
-				"key1":                      "value1",
+	t.Run("only trace ID and resource version annotations changed", func(t *testing.T) {
+		oldPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					constants.TraceIDAnnotation: "old-trace-id",
+					constants.SpanIDAnnotation:  "old-span-id",
+					"key1":                      "value1",
+				},
+				ResourceVersion: "old-resource-version",
 			},
-			ResourceVersion: "old-resource-version",
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{},
-		},
-	}
-
-	newPod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				constants.TraceIDAnnotation: "new-trace-id",
-				constants.SpanIDAnnotation:  "new-span-id",
-				"key1":                      "value1",
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{},
 			},
-			ResourceVersion: "new-resource-version",
-		},
-		Spec: corev1.PodSpec{
-			Containers: nil,
-		},
-	}
+		}
 
-	updateEvent := event.UpdateEvent{
-		ObjectOld: oldPod,
-		ObjectNew: newPod,
-	}
+		newPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					constants.TraceIDAnnotation: "new-trace-id",
+					constants.SpanIDAnnotation:  "new-span-id",
+					"key1":                      "value1",
+				},
+				ResourceVersion: "new-resource-version",
+			},
+			Spec: corev1.PodSpec{
+				Containers: nil,
+			},
+		}
 
-	// Only trace ID and resource version changed, should return false
-	result := pred.Update(updateEvent)
-	assert.False(t, result, "Expected update to be ignored when only trace ID and resource version annotations change")
+		updateEvent := event.UpdateEvent{
+			ObjectOld: oldPod,
+			ObjectNew: newPod,
+		}
 
-	// Test case: Another annotation changed
-	newPod.Annotations["key1"] = "new-value1"
-	updateEvent = event.UpdateEvent{
-		ObjectOld: oldPod,
-		ObjectNew: newPod,
-	}
+		result := pred.Update(updateEvent)
+		assert.False(t, result, "Expected update to be ignored when only trace ID and resource version annotations change")
+	})
 
-	// Another annotation changed, should return true
-	result = pred.Update(updateEvent)
-	assert.True(t, result, "Expected update to be processed when other annotations change")
+	t.Run("another annotation changed", func(t *testing.T) {
+		oldPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					constants.TraceIDAnnotation: "old-trace-id",
+					constants.SpanIDAnnotation:  "old-span-id",
+					"key1":                      "value1",
+				},
+				ResourceVersion: "old-resource-version",
+			},
+		}
 
-	// Test case: Spec changed
-	oldPod.Spec.Containers = []corev1.Container{
-		{
-			Name:  "nginx",
-			Image: "nginx:1.14.2",
-		},
-	}
-	newPod.Spec.Containers = []corev1.Container{
-		{
-			Name:  "nginx",
-			Image: "nginx:1.15.0",
-		},
-	}
-	updateEvent = event.UpdateEvent{
-		ObjectOld: oldPod,
-		ObjectNew: newPod,
-	}
+		newPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					constants.TraceIDAnnotation: "old-trace-id",
+					constants.SpanIDAnnotation:  "old-span-id",
+					"key1":                      "new-value",
+				},
+				ResourceVersion: "new-resource-version",
+			},
+		}
 
-	// Spec changed, should return true
-	result = pred.Update(updateEvent)
-	assert.True(t, result, "Expected update to be processed when spec changes")
+		updateEvent := event.UpdateEvent{
+			ObjectOld: oldPod,
+			ObjectNew: newPod,
+		}
 
-	// Test case: Status changed
-	oldPod.Status.Phase = corev1.PodPending
-	newPod.Status.Phase = corev1.PodRunning
-	updateEvent = event.UpdateEvent{
-		ObjectOld: oldPod,
-		ObjectNew: newPod,
-	}
+		result := pred.Update(updateEvent)
+		assert.True(t, result, "Expected update to be processed when other annotations change")
+	})
 
-	// Status changed, should return true
-	result = pred.Update(updateEvent)
-	assert.True(t, result, "Expected update to be processed when status changes")
+	t.Run("spec changed", func(t *testing.T) {
+		oldPod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:  "nginx",
+						Image: "nginx:1.14.2",
+					},
+				},
+			},
+		}
+
+		newPod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:  "nginx",
+						Image: "nginx:1.15.0",
+					},
+				},
+			},
+		}
+
+		updateEvent := event.UpdateEvent{
+			ObjectOld: oldPod,
+			ObjectNew: newPod,
+		}
+
+		result := pred.Update(updateEvent)
+		assert.True(t, result, "Expected update to be processed when spec changes")
+	})
+
+	t.Run("status changed", func(t *testing.T) {
+		oldPod := &corev1.Pod{
+			Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+			},
+		}
+
+		newPod := &corev1.Pod{
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+			},
+		}
+
+		updateEvent := event.UpdateEvent{
+			ObjectOld: oldPod,
+			ObjectNew: newPod,
+		}
+
+		result := pred.Update(updateEvent)
+		assert.True(t, result, "Expected update to be processed when status changes")
+	})
 }
