@@ -65,6 +65,7 @@ func getFieldExcludingObservedGeneration(obj map[string]interface{}, field strin
 	}
 	if statusMap, ok := status.(map[string]interface{}); ok {
 		delete(statusMap, "observedGeneration")
+		removeTraceAndSpanConditions(statusMap)
 		return statusMap
 	}
 	return status
@@ -152,4 +153,22 @@ func unstructuredNestedFieldNoCopy(obj map[string]interface{}, fields ...string)
 		return nil, false, err
 	}
 	return val, true, nil
+}
+
+// removeTraceAndSpanConditions removes conditions with Type 'TraceID' or 'SpanID' from the status.
+func removeTraceAndSpanConditions(statusMap map[string]interface{}) {
+	conditions, found, err := unstructured.NestedSlice(statusMap, "conditions")
+	if err != nil || !found {
+		return
+	}
+	filteredConditions := []interface{}{}
+	for _, condition := range conditions {
+		if conditionMap, ok := condition.(map[string]interface{}); ok {
+			conditionType, _, _ := unstructured.NestedString(conditionMap, "type")
+			if conditionType != "TraceID" && conditionType != "SpanID" {
+				filteredConditions = append(filteredConditions, condition)
+			}
+		}
+	}
+	statusMap["conditions"] = filteredConditions
 }

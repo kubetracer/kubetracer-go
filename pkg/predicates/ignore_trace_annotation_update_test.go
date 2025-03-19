@@ -149,6 +149,13 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 			Status: appsv1.DeploymentStatus{
 				ObservedGeneration: 1,
 				Replicas:           1,
+				Conditions: []appsv1.DeploymentCondition{
+					{
+						Type:    "TraceID",
+						Status:  corev1.ConditionTrue,
+						Message: "5678",
+					},
+				},
 			},
 		}
 
@@ -157,8 +164,15 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 				Generation: 2, // Simulate a change in resource generation
 			},
 			Status: appsv1.DeploymentStatus{
-				ObservedGeneration: 1, // Ignored field
+				ObservedGeneration: 2,
 				Replicas:           1,
+				Conditions: []appsv1.DeploymentCondition{
+					{
+						Type:    "TraceID",
+						Status:  corev1.ConditionTrue,
+						Message: "1234",
+					},
+				},
 			},
 		}
 
@@ -168,6 +182,6 @@ func TestIgnoreTraceAnnotationUpdatePredicate(t *testing.T) {
 		}
 
 		result := pred.Update(updateEvent)
-		assert.False(t, result, "Expected update to be ignored when only the resource generation changes")
+		assert.False(t, result, "Expected update to be ignored when only the resource generation or traceid changes")
 	})
 }
