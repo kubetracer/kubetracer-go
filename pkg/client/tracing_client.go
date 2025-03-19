@@ -746,6 +746,7 @@ func setConditionMessage(conditionType, message string, obj client.Object, schem
 	for i, condition := range conditions {
 		if condition.Type == conditionType {
 			conditions[i].Message = message
+			conditions[i].LastTransitionTime = metav1.Now()
 			conditionFound = true
 			break
 		}
@@ -754,9 +755,10 @@ func setConditionMessage(conditionType, message string, obj client.Object, schem
 	if !conditionFound {
 		// Add the condition if it doesn't exist
 		newCondition := metav1.Condition{
-			Type:    conditionType,
-			Status:  metav1.ConditionUnknown,
-			Message: message,
+			Type:               conditionType,
+			Status:             metav1.ConditionUnknown,
+			LastTransitionTime: metav1.Now(),
+			Message:            message,
 		}
 		conditions = append(conditions, newCondition)
 	}
