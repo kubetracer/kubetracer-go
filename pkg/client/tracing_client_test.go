@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -54,8 +55,14 @@ func TestNewTracingClient(t *testing.T) {
 
 func TestEmbedTraceIDInNamespacedName(t *testing.T) {
 	// Set up the tracingClient
+	fakeClient := fake.NewClientBuilder().WithObjects().Build()
+	scheme := runtime.NewScheme()
+	corev1.AddToScheme(scheme)
+
 	tracingClient := &tracingClient{
 		Logger: logr.Discard(),
+		scheme: scheme,
+		Client: fakeClient,
 	}
 
 	// Mock object with traceID and spanID annotations
@@ -71,7 +78,7 @@ func TestEmbedTraceIDInNamespacedName(t *testing.T) {
 	}
 
 	// Set up a client.ObjectKey
-	key := client.ObjectKey{Name: "test-pod", Namespace: "default"}
+	key := client.ObjectKey{Name: "test-deployment", Namespace: "default"}
 
 	// Call the function
 	err := tracingClient.EmbedTraceIDInNamespacedName(&key, pod)
@@ -80,7 +87,7 @@ func TestEmbedTraceIDInNamespacedName(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Assert the name has been updated correctly
-	expectedName := "1234;5678;test-pod"
+	expectedName := "1234;5678;Pod;test-pod;test-deployment"
 	assert.Equal(t, expectedName, key.Name)
 }
 
@@ -151,7 +158,7 @@ func TestPassingTraceIdInNamespacedName(t *testing.T) {
 
 	ctx := context.Background()
 
-	key := client.ObjectKey{Name: "f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;pre-test-pod", Namespace: "default"}
+	key := client.ObjectKey{Name: "f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;Configmap;configmap-10;pre-test-pod", Namespace: "default"}
 
 	// Create a spanId since no GET is being called to initialize the span
 	_, span, err := tracingClient.StartTrace(ctx, key, &corev1.Pod{})
