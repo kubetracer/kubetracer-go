@@ -70,7 +70,7 @@ func (tc *tracingClient) Create(ctx context.Context, obj client.Object, opts ...
 	}
 
 	kind := gvk.GroupKind().Kind
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Create %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Create %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -92,7 +92,7 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Update %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Update %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -107,7 +107,7 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 }
 
 func (tc *tracingClient) StartSpan(ctx context.Context, operationName string) (context.Context, trace.Span) {
-	return startSpanFromContext(ctx, tc.Logger, tc.Tracer, nil, operationName)
+	return startSpanFromContext(ctx, tc.Logger, tc.Tracer, nil, tc.scheme, operationName)
 }
 
 // EmbedTraceIDInNamespacedName embeds the traceID and spanID in the key.Name
@@ -157,7 +157,7 @@ func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, o
 		operationName = fmt.Sprintf("StartTrace %s %s", objectKind, name)
 	}
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, operationName)
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, operationName)
 
 	if err != nil {
 		span.RecordError(err)
@@ -169,7 +169,7 @@ func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, o
 
 // Ends the trace by clearing the traceid from the object
 func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) (client.Object, error) {
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("EndTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("EndTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
 	defer span.End()
 
 	annotations := obj.GetAnnotations()
@@ -209,6 +209,19 @@ func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts .
 		span.RecordError(err)
 	}
 
+	// remove the traceid and spanid conditions from the object and create a status().patch
+	deleteCondition("TraceID", obj, tc.scheme)
+	deleteCondition("SpanID", obj, tc.scheme)
+	original = obj.DeepCopyObject().(client.Object)
+	patch = client.MergeFrom(original)
+
+	tc.Logger.Info("Patching object status", "object", obj.GetName())
+	err = tc.Status().Patch(ctx, obj, patch)
+
+	if err != nil {
+		span.RecordError(err)
+	}
+
 	return obj, err
 }
 
@@ -222,7 +235,7 @@ func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj clie
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Get %s %s", kind, key.Name))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Get %s %s", kind, key.Name))
 	defer span.End()
 
 	tc.Logger.Info("Getting object", "object", key.Name)
@@ -259,7 +272,7 @@ func (tc *tracingClient) Patch(ctx context.Context, obj client.Object, patch cli
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Patch %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Patch %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -281,7 +294,7 @@ func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Delete %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Delete %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	tc.Logger.Info("Deleting object", "object", obj.GetName())
@@ -300,7 +313,7 @@ func (tc *tracingClient) DeleteAllOf(ctx context.Context, obj client.Object, opt
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("DeleteAllOf %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("DeleteAllOf %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	tc.Logger.Info("Deleting all of object", "object", obj.GetName())
@@ -329,7 +342,7 @@ func (ts *tracingStatusClient) Update(ctx context.Context, obj client.Object, op
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusUpdate %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusUpdate %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -349,7 +362,7 @@ func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, pat
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusPatch %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusPatch %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	setConditionMessage("TraceID", span.SpanContext().TraceID().String(), obj, ts.scheme)
@@ -370,7 +383,7 @@ func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, su
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusCreate %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusCreate %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -382,7 +395,7 @@ func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, su
 }
 
 // startSpanFromContext starts a new span from the context and attaches trace information to the object
-func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.Tracer, obj client.Object, operationName string) (context.Context, trace.Span) {
+func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.Tracer, obj client.Object, scheme *runtime.Scheme, operationName string) (context.Context, trace.Span) {
 	span := trace.SpanFromContext(ctx)
 	if span.SpanContext().IsValid() {
 		spanContext := trace.NewSpanContext(trace.SpanContextConfig{
@@ -396,11 +409,11 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 
 	if !span.SpanContext().IsValid() {
 		if obj != nil {
-			// No valid trace ID in context, check object annotations
-			if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
+			// no valid trace ID in context, check object conditions
+			if traceID, err := getConditionMessage("TraceID", obj, scheme); err == nil {
 				if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
 					spanContext := trace.NewSpanContext(trace.SpanContextConfig{})
-					if spanID, ok := obj.GetAnnotations()[constants.SpanIDAnnotation]; ok {
+					if spanID, err := getConditionMessage("SpanID", obj, scheme); err == nil {
 						if spanIDValue, err := trace.SpanIDFromHex(spanID); err == nil {
 							spanContext = trace.NewSpanContext(trace.SpanContextConfig{
 								TraceID: traceIDValue,
@@ -413,8 +426,28 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 						}
 					}
 					ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
-				} else {
-					logger.Error(err, "Invalid trace ID", "traceID", traceID)
+				}
+			} else {
+				// No valid trace ID in context, check object annotations
+				if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
+					if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
+						spanContext := trace.NewSpanContext(trace.SpanContextConfig{})
+						if spanID, ok := obj.GetAnnotations()[constants.SpanIDAnnotation]; ok {
+							if spanIDValue, err := trace.SpanIDFromHex(spanID); err == nil {
+								spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+									TraceID: traceIDValue,
+									SpanID:  spanIDValue,
+								})
+							} else {
+								spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+									TraceID: traceIDValue,
+								})
+							}
+						}
+						ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
+					} else {
+						logger.Error(err, "Invalid trace ID", "traceID", traceID)
+					}
 				}
 			}
 		}
@@ -723,4 +756,21 @@ func setConditionMessage(conditionType, message string, obj client.Object, schem
 
 	// Set the updated conditions back to the object
 	return setConditions(obj, conditions, scheme)
+}
+
+func deleteCondition(conditionType string, obj client.Object, scheme *runtime.Scheme) error {
+	conditions, err := getConditions(obj, scheme)
+	if err != nil {
+		return err
+	}
+
+	outConditions := []metav1.Condition{}
+	for i, condition := range conditions {
+		if condition.Type != conditionType {
+			outConditions = append(conditions[:i], conditions[i+1:]...)
+		}
+	}
+
+	// Set the updated conditions back to the object
+	return setConditions(obj, outConditions, scheme)
 }

@@ -234,7 +234,8 @@ func TestChainReactionTracing(t *testing.T) {
 		retrievedPatchedPod := &corev1.Pod{}
 		err = newTracingClient.Get(ctx, client.ObjectKey{Name: "initial-pod", Namespace: "default"}, retrievedPatchedPod)
 		assert.NoError(t, err)
-		assert.Equal(t, savedtraceID, retrievedPatchedPod.Annotations[constants.TraceIDAnnotation])
+		traceid, _ := getConditionMessage("TraceID", retrievedPatchedPod, k8sClient.Scheme())
+		assert.Equal(t, savedtraceID, traceid)
 		//Annotations will not be patched with Status.Patch
 		assert.Equal(t, savedSpanID, retrievedPatchedPod.Annotations[constants.SpanIDAnnotation])
 	})
@@ -768,4 +769,45 @@ func TestSetConditionMessage(t *testing.T) {
 	// Assert the message is as expected
 	expectedMessage = "Initial message"
 	assert.Equal(t, expectedMessage, message)
+}
+
+func TestDeleteCondition(t *testing.T) {
+	// Create a scheme
+	scheme := runtime.NewScheme()
+	corev1.AddToScheme(scheme)
+
+	// Create a Pod object with conditions
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{
+					Type:               corev1.PodScheduled,
+					Status:             corev1.ConditionTrue,
+					Reason:             "PodScheduled",
+					Message:            "Pod has been scheduled",
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		},
+	}
+
+	// Delete the condition using the deleteCondition function
+	err := deleteCondition("PodScheduled", pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Retrieve the conditions using the getConditions function
+	conditions, err := getConditions(pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Assert the conditions are as expected
+	expectedConditions := []metav1.Condition(nil)
+	assert.Equal(t, expectedConditions, conditions)
 }
