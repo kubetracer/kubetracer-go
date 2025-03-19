@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -28,6 +29,8 @@ type requestWithTraceID struct {
 	NamespacedName reconcile.Request
 	TraceID        string
 	SpanID         string
+	SenderName     string
+	SenderKind     string
 	EventKind      string
 }
 
@@ -62,6 +65,7 @@ func TypedEnqueueRequestForOwner[object client.Object](scheme *runtime.Scheme, m
 	e := &enqueueRequestForOwner[object]{
 		ownerType: ownerType,
 		mapper:    mapper,
+		scheme:    scheme,
 	}
 	if err := e.parseOwnerTypeGroupKind(scheme); err != nil {
 		panic(err)
@@ -95,6 +99,9 @@ type enqueueRequestForOwner[object client.Object] struct {
 
 	// mapper maps GroupVersionKinds to Resources
 	mapper meta.RESTMapper
+
+	// scheme is used to get the GroupVersionKind of the object
+	scheme *runtime.Scheme
 }
 
 func (e *enqueueRequestForOwner[object]) setIsController(isController bool) {
@@ -174,6 +181,16 @@ func (e *enqueueRequestForOwner[object]) getOwnerReconcileRequest(obj metav1.Obj
 			return
 		}
 
+		runtimeObj, _ := obj.(runtime.Object)
+		gvk, err := apiutil.GVKForObject(runtimeObj, e.scheme)
+		kind := ""
+		if err != nil {
+			// log.Error(err, "Could not retrieve GVK for object", "object", obj)
+			return
+		} else {
+			kind = gvk.GroupKind().Kind
+		}
+
 		// Compare the OwnerReference Group and Kind against the OwnerType Group and Kind specified by the user.
 		// If the two match, create a Request for the objected referred to by
 		// the OwnerReference.  Use the Name from the OwnerReference and the Namespace from the
@@ -200,6 +217,8 @@ func (e *enqueueRequestForOwner[object]) getOwnerReconcileRequest(obj metav1.Obj
 
 			traceId := obj.GetAnnotations()[constants.TraceIDAnnotation]
 			spanId := obj.GetAnnotations()[constants.SpanIDAnnotation]
+			senderName := obj.GetName()
+			senderKind := kind
 
 			if traceId != "" && spanId != "" {
 				request.TraceID = traceId
@@ -207,6 +226,8 @@ func (e *enqueueRequestForOwner[object]) getOwnerReconcileRequest(obj metav1.Obj
 			}
 
 			request.EventKind = eventKind
+			request.SenderName = senderName
+			request.SenderKind = senderKind
 
 			result[request] = empty{}
 		}
@@ -227,7 +248,7 @@ func requestWithTraceIDToRequest(requests map[requestWithTraceID]empty) map[reco
 		var name string
 
 		if req.TraceID != "" && req.SpanID != "" {
-			name = fmt.Sprintf("%s;%s;%s", req.TraceID, req.SpanID, req.NamespacedName.Name)
+			name = fmt.Sprintf("%s;%s;%s;%s;%s", req.TraceID, req.SpanID, req.SenderKind, req.SenderName, req.NamespacedName.Name)
 		} else {
 			name = req.NamespacedName.Name
 		}
