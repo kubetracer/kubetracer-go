@@ -345,8 +345,10 @@ func (ts *tracingStatusClient) Update(ctx context.Context, obj client.Object, op
 	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusUpdate %s %s", kind, obj.GetName()))
 	defer span.End()
 
-	addTraceIDAnnotation(ctx, obj)
-	ts.Logger.Info("updating object", "object", obj.GetName())
+	setConditionMessage("TraceID", span.SpanContext().TraceID().String(), obj, ts.scheme)
+	setConditionMessage("SpanID", span.SpanContext().SpanID().String(), obj, ts.scheme)
+
+	ts.Logger.Info("updating status object", "object", obj.GetName())
 	err = ts.StatusWriter.Update(ctx, obj, opts...)
 	if err != nil {
 		span.RecordError(err)
@@ -367,6 +369,8 @@ func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, pat
 
 	setConditionMessage("TraceID", span.SpanContext().TraceID().String(), obj, ts.scheme)
 	setConditionMessage("SpanID", span.SpanContext().SpanID().String(), obj, ts.scheme)
+
+	ts.Logger.Info("patching status object", "object", obj.GetName())
 	err = ts.StatusWriter.Patch(ctx, obj, patch, opts...)
 	if err != nil {
 		span.RecordError(err)
@@ -386,7 +390,10 @@ func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, su
 	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusCreate %s %s", kind, obj.GetName()))
 	defer span.End()
 
-	addTraceIDAnnotation(ctx, obj)
+	setConditionMessage("TraceID", span.SpanContext().TraceID().String(), obj, ts.scheme)
+	setConditionMessage("SpanID", span.SpanContext().SpanID().String(), obj, ts.scheme)
+
+	ts.Logger.Info("creating status object", "object", obj.GetName())
 	err = ts.StatusWriter.Create(ctx, obj, subResource, opts...)
 	if err != nil {
 		span.RecordError(err)
