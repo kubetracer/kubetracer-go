@@ -116,7 +116,15 @@ func (tc *tracingClient) EmbedTraceIDInNamespacedName(key *client.ObjectKey, obj
 		return nil
 	}
 
-	key.Name = fmt.Sprintf("%s;%s;%s", traceID, spanID, key.Name)
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the scheme: %w", err)
+	}
+
+	objectKind := gvk.GroupKind().Kind
+	objectName := obj.GetName()
+
+	key.Name = fmt.Sprintf("%s;%s;%s;%s;%s", traceID, spanID, objectKind, objectName, key.Name)
 	tc.Logger.Info("EmbedTraceIDInNamespacedName", "objectName", key.Name)
 	return nil
 }
@@ -124,12 +132,30 @@ func (tc *tracingClient) EmbedTraceIDInNamespacedName(key *client.ObjectKey, obj
 // Get adds tracing around the original client's Get method
 // IMPORTANT: Caller MUST call `defer span.End()` to end the trace from the calling function
 func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) (context.Context, trace.Span, error) {
-	initialKey := client.ObjectKey{Name: getNameFromNamespacedName(key), Namespace: key.Namespace}
+	name := getNameFromNamespacedName(key)
+	initialKey := client.ObjectKey{Name: name, Namespace: key.Namespace}
 
 	// Create or retrieve the span from the context
-	err := tc.Reader.Get(ctx, initialKey, obj, opts...)
+	_ = tc.Reader.Get(ctx, initialKey, obj, opts...)
 	overrideTraceIDFromNamespacedName(key, obj)
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("StartTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, key.Name))
+
+	gvk, err := apiutil.GVKForObject(obj, tc.scheme)
+	objectKind := ""
+	if err == nil {
+		objectKind = gvk.GroupKind().Kind
+	}
+	callerName := getCallerNameFromNamespacedName(key)
+	callerKind := getCallerKindFromNamespacedName(key)
+
+	operationName := ""
+
+	if callerKind != "" && callerName != "" {
+		operationName = fmt.Sprintf("Get %s %s %s %s", callerKind, callerName, objectKind, obj.GetName())
+	} else {
+		operationName = fmt.Sprintf("StartTrace %s %s", objectKind, name)
+	}
+
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, operationName)
 
 	if err != nil {
 		span.RecordError(err)
@@ -396,23 +422,43 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 	return ctx, span
 }
 
-func getNameFromNamespacedName(key client.ObjectKey) string {
-	// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;default-pod
-	// this will return the corrected key.name
+// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;Configmap;pod-configmap01;default-pod
+// this will return the corrected Kind (Configmap)
+func getCallerKindFromNamespacedName(key client.ObjectKey) string {
+
 	keyNameParts := strings.Split(key.Name, ";")
-	if len(keyNameParts) != 3 {
-		return key.Name
+	if len(keyNameParts) != 5 {
+		return ""
 	}
 	return keyNameParts[2]
 }
 
-func overrideTraceIDFromNamespacedName(key client.ObjectKey, obj client.Object) error {
-	// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;default-pod
-	// then we can extract the traceID and spanID from the key.Name
-	// and override the traceID and spanID in the object annotations
-
+// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;Configmap;pod-configmap01;default-pod
+// this will return the corrected caller-name (pod-configmap01)
+func getCallerNameFromNamespacedName(key client.ObjectKey) string {
 	keyNameParts := strings.Split(key.Name, ";")
-	if len(keyNameParts) != 3 {
+	if len(keyNameParts) != 5 {
+		return ""
+	}
+	return keyNameParts[3]
+}
+
+// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;Configmap;pod-configmap01;default-pod
+// this will return the corrected key.name (default-pod)
+func getNameFromNamespacedName(key client.ObjectKey) string {
+	keyNameParts := strings.Split(key.Name, ";")
+	if len(keyNameParts) != 5 {
+		return key.Name
+	}
+	return keyNameParts[4]
+}
+
+// if the key.Name looks like this: f620f5cad0af940c294f980c5366a6a1;45f359cdc1c8ab06;Configmap;pod-configmap01;default-pod
+// then we can extract the traceID and spanID from the key.Name
+// and override the traceID and spanID in the object annotations
+func overrideTraceIDFromNamespacedName(key client.ObjectKey, obj client.Object) error {
+	keyNameParts := strings.Split(key.Name, ";")
+	if len(keyNameParts) != 5 {
 		return nil
 	}
 
