@@ -3,11 +3,13 @@ package client
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/go-logr/logr"
 	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
 	"go.opentelemetry.io/otel/trace"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -350,7 +352,8 @@ func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, pat
 	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusPatch %s %s", kind, obj.GetName()))
 	defer span.End()
 
-	addTraceIDAnnotation(ctx, obj)
+	setConditionMessage("TraceID", span.SpanContext().TraceID().String(), obj, ts.scheme)
+	setConditionMessage("SpanID", span.SpanContext().SpanID().String(), obj, ts.scheme)
 	err = ts.StatusWriter.Patch(ctx, obj, patch, opts...)
 	if err != nil {
 		span.RecordError(err)
@@ -513,4 +516,211 @@ func addTraceIDAnnotation(ctx context.Context, obj client.Object) {
 		annotations[constants.SpanIDAnnotation] = spanID
 		obj.SetAnnotations(annotations)
 	}
+}
+
+// getConditions retrieves the "conditions" field from the status of a Kubernetes object using type casting and returns it as []metav1.Condition.
+func getConditions(obj client.Object, scheme *runtime.Scheme) ([]metav1.Condition, error) {
+	gvk, err := apiutil.GVKForObject(obj, scheme)
+	if err != nil {
+		return nil, fmt.Errorf("problem getting the GVK: %w", err)
+	}
+
+	// Use the scheme to get the specific type of the object.
+	objTyped, err := scheme.New(gvk)
+	if err != nil {
+		return nil, fmt.Errorf("problem creating new object of kind %s: %w", gvk.Kind, err)
+	}
+
+	// Cast the object to its specific type.
+	if err := scheme.Convert(obj, objTyped, nil); err != nil {
+		return nil, fmt.Errorf("problem converting object to kind %s: %w", gvk.Kind, err)
+	}
+
+	// Use reflection to access the conditions field.
+	val := reflect.ValueOf(objTyped)
+	statusField := val.Elem().FieldByName("Status")
+	if !statusField.IsValid() {
+		return nil, fmt.Errorf("status field not found in kind %s", gvk.Kind)
+	}
+
+	conditionsField := statusField.FieldByName("Conditions")
+	if !conditionsField.IsValid() {
+		return nil, fmt.Errorf("conditions field not found in kind %s", gvk.Kind)
+	}
+
+	conditionsValue := conditionsField.Interface()
+	conditions, err := convertToMetaV1Conditions(conditionsValue)
+	if err != nil {
+		return nil, fmt.Errorf("error converting conditions for kind %s: %w", gvk.Kind, err)
+	}
+
+	return conditions, nil
+}
+
+// getConditionMessage retrieves the message for a specific condition type from a Kubernetes object.
+func getConditionMessage(conditionType string, obj client.Object, scheme *runtime.Scheme) (string, error) {
+	conditions, err := getConditions(obj, scheme)
+	if err != nil {
+		return "", err
+	}
+
+	for _, condition := range conditions {
+		if condition.Type == conditionType {
+			return condition.Message, nil
+		}
+	}
+
+	return "", fmt.Errorf("condition of type %s not found", conditionType)
+}
+
+// convertToMetaV1Conditions converts conditions of any supported type to []metav1.Condition.
+func convertToMetaV1Conditions(conditionsValue interface{}) ([]metav1.Condition, error) {
+	val := reflect.ValueOf(conditionsValue)
+	if val.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("conditions field is not a slice")
+	}
+
+	var metav1Conditions []metav1.Condition
+	for i := 0; i < val.Len(); i++ {
+		conditionVal := val.Index(i)
+		if conditionVal.Kind() == reflect.Ptr {
+			conditionVal = conditionVal.Elem()
+		}
+
+		condition := metav1.Condition{}
+		for _, field := range reflect.VisibleFields(conditionVal.Type()) {
+			fieldValue := conditionVal.FieldByIndex(field.Index)
+			switch field.Name {
+			case "Type":
+				condition.Type = fieldValue.String()
+			case "Status":
+				condition.Status = metav1.ConditionStatus(fieldValue.String())
+			case "Reason":
+				condition.Reason = fieldValue.String()
+			case "Message":
+				condition.Message = fieldValue.String()
+			case "LastTransitionTime":
+				condition.LastTransitionTime = fieldValue.Interface().(metav1.Time)
+			}
+		}
+		metav1Conditions = append(metav1Conditions, condition)
+	}
+
+	return metav1Conditions, nil
+}
+
+// convertFromMetaV1 converts []metav1.Condition to the specific type of conditions used by the Kubernetes object.
+func convertFromMetaV1(conditions []metav1.Condition, targetType reflect.Type) (interface{}, error) {
+	if targetType.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("target type is not a slice")
+	}
+
+	elemType := targetType.Elem()
+	if elemType.Kind() == reflect.Ptr {
+		elemType = elemType.Elem()
+	}
+
+	result := reflect.MakeSlice(targetType, len(conditions), len(conditions))
+	for i, cond := range conditions {
+		targetCond := reflect.New(elemType).Elem()
+
+		for _, field := range reflect.VisibleFields(elemType) {
+			fieldValue := targetCond.FieldByIndex(field.Index)
+			switch field.Name {
+			case "Type":
+				fieldValue.SetString(cond.Type)
+			case "Status":
+				fieldValue.SetString(string(cond.Status))
+			case "Reason":
+				fieldValue.SetString(cond.Reason)
+			case "Message":
+				fieldValue.SetString(cond.Message)
+			case "LastTransitionTime":
+				fieldValue.Set(reflect.ValueOf(cond.LastTransitionTime))
+			}
+		}
+
+		if targetType.Elem().Kind() == reflect.Ptr {
+			result.Index(i).Set(targetCond.Addr())
+		} else {
+			result.Index(i).Set(targetCond)
+		}
+	}
+
+	return result.Interface(), nil
+}
+
+// setConditions sets the "conditions" field in the status of a Kubernetes object using type casting.
+func setConditions(obj client.Object, conditions []metav1.Condition, scheme *runtime.Scheme) error {
+	gvk, err := apiutil.GVKForObject(obj, scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the GVK: %w", err)
+	}
+
+	// Use the scheme to get the specific type of the object.
+	objTyped, err := scheme.New(gvk)
+	if err != nil {
+		return fmt.Errorf("problem creating new object of kind %s: %w", gvk.Kind, err)
+	}
+
+	// Cast the object to its specific type.
+	if err := scheme.Convert(obj, objTyped, nil); err != nil {
+		return fmt.Errorf("problem converting object to kind %s: %w", gvk.Kind, err)
+	}
+
+	// Use reflection to set the conditions field.
+	val := reflect.ValueOf(objTyped)
+	statusField := val.Elem().FieldByName("Status")
+	if !statusField.IsValid() {
+		return fmt.Errorf("status field not found in kind %s", gvk.Kind)
+	}
+
+	conditionsField := statusField.FieldByName("Conditions")
+	if !conditionsField.IsValid() {
+		return fmt.Errorf("conditions field not found in kind %s", gvk.Kind)
+	}
+
+	convertedConditions, err := convertFromMetaV1(conditions, conditionsField.Type())
+	if err != nil {
+		return fmt.Errorf("error converting conditions for kind %s: %w", gvk.Kind, err)
+	}
+
+	conditionsField.Set(reflect.ValueOf(convertedConditions))
+
+	// Convert the typed object back to the unstructured object.
+	if err := scheme.Convert(objTyped, obj, nil); err != nil {
+		return fmt.Errorf("problem converting object back to unstructured: %w", err)
+	}
+
+	return nil
+}
+
+// setConditionMessage sets the message for a specific condition type in a Kubernetes object.
+func setConditionMessage(conditionType, message string, obj client.Object, scheme *runtime.Scheme) error {
+	conditions, err := getConditions(obj, scheme)
+	if err != nil {
+		return err
+	}
+
+	conditionFound := false
+	for i, condition := range conditions {
+		if condition.Type == conditionType {
+			conditions[i].Message = message
+			conditionFound = true
+			break
+		}
+	}
+
+	if !conditionFound {
+		// Add the condition if it doesn't exist
+		newCondition := metav1.Condition{
+			Type:    conditionType,
+			Status:  metav1.ConditionUnknown,
+			Message: message,
+		}
+		conditions = append(conditions, newCondition)
+	}
+
+	// Set the updated conditions back to the object
+	return setConditions(obj, conditions, scheme)
 }

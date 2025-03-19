@@ -639,3 +639,133 @@ func TestDeleteAllOfWithTracing(t *testing.T) {
 	assert.NotEmpty(t, traceID)
 
 }
+
+func TestGetConditions(t *testing.T) {
+	// Create a scheme
+	scheme := runtime.NewScheme()
+	corev1.AddToScheme(scheme)
+
+	// Create a Pod object with conditions
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodScheduled,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
+	}
+
+	// Retrieve the conditions using the getConditions function
+	conditions, err := getConditions(pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Assert the conditions are as expected
+	expectedConditions := []metav1.Condition{
+		{
+			Type:   string(corev1.PodScheduled),
+			Status: metav1.ConditionTrue,
+		},
+	}
+
+	assert.Equal(t, expectedConditions, conditions)
+}
+
+func TestGetConditionMessage(t *testing.T) {
+	// Create a scheme
+	scheme := runtime.NewScheme()
+	corev1.AddToScheme(scheme)
+
+	// Create a Pod object with conditions
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{
+					Type:               corev1.PodScheduled,
+					Status:             corev1.ConditionTrue,
+					Reason:             "PodScheduled",
+					Message:            "Pod has been scheduled",
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		},
+	}
+
+	// Retrieve the condition message using the getConditionMessage function
+	message, err := getConditionMessage("PodScheduled", pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Assert the message is as expected
+	expectedMessage := "Pod has been scheduled"
+	assert.Equal(t, expectedMessage, message)
+}
+
+func TestSetConditionMessage(t *testing.T) {
+	// Create a scheme
+	scheme := runtime.NewScheme()
+	corev1.AddToScheme(scheme)
+
+	// Create a Pod object with conditions
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{
+				{
+					Type:               corev1.PodScheduled,
+					Status:             corev1.ConditionTrue,
+					Reason:             "PodScheduled",
+					Message:            "Pod has been scheduled",
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		},
+	}
+
+	// Set the condition message using the setConditionMessage function
+	err := setConditionMessage("PodScheduled", "New message", pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Retrieve the updated condition message using the getConditionMessage function
+	message, err := getConditionMessage("PodScheduled", pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Assert the message is as expected
+	expectedMessage := "New message"
+	assert.Equal(t, expectedMessage, message)
+
+	// Test setting a new condition
+	err = setConditionMessage("NewCondition", "Initial message", pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Retrieve the new condition message using the getConditionMessage function
+	message, err = getConditionMessage("NewCondition", pod, scheme)
+
+	// Assert no error occurred
+	assert.NoError(t, err)
+
+	// Assert the message is as expected
+	expectedMessage = "Initial message"
+	assert.Equal(t, expectedMessage, message)
+}
