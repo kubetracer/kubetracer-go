@@ -3,11 +3,13 @@ package client
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/go-logr/logr"
 	constants "github.com/kubetracer/kubetracer-go/pkg/constants"
 	"go.opentelemetry.io/otel/trace"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -68,7 +70,7 @@ func (tc *tracingClient) Create(ctx context.Context, obj client.Object, opts ...
 	}
 
 	kind := gvk.GroupKind().Kind
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Create %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Create %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -90,7 +92,7 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Update %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Update %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -105,7 +107,7 @@ func (tc *tracingClient) Update(ctx context.Context, obj client.Object, opts ...
 }
 
 func (tc *tracingClient) StartSpan(ctx context.Context, operationName string) (context.Context, trace.Span) {
-	return startSpanFromContext(ctx, tc.Logger, tc.Tracer, nil, operationName)
+	return startSpanFromContext(ctx, tc.Logger, tc.Tracer, nil, tc.scheme, operationName)
 }
 
 // EmbedTraceIDInNamespacedName embeds the traceID and spanID in the key.Name
@@ -155,7 +157,7 @@ func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, o
 		operationName = fmt.Sprintf("StartTrace %s %s", objectKind, name)
 	}
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, operationName)
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, operationName)
 
 	if err != nil {
 		span.RecordError(err)
@@ -167,7 +169,7 @@ func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, o
 
 // Ends the trace by clearing the traceid from the object
 func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts ...client.PatchOption) (client.Object, error) {
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("EndTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("EndTrace %s %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName()))
 	defer span.End()
 
 	annotations := obj.GetAnnotations()
@@ -207,6 +209,19 @@ func (tc *tracingClient) EndTrace(ctx context.Context, obj client.Object, opts .
 		span.RecordError(err)
 	}
 
+	// remove the traceid and spanid conditions from the object and create a status().patch
+	deleteCondition("TraceID", obj, tc.scheme)
+	deleteCondition("SpanID", obj, tc.scheme)
+	original = obj.DeepCopyObject().(client.Object)
+	patch = client.MergeFrom(original)
+
+	tc.Logger.Info("Patching object status", "object", obj.GetName())
+	err = tc.Status().Patch(ctx, obj, patch)
+
+	if err != nil {
+		span.RecordError(err)
+	}
+
 	return obj, err
 }
 
@@ -220,7 +235,7 @@ func (tc *tracingClient) Get(ctx context.Context, key client.ObjectKey, obj clie
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Get %s %s", kind, key.Name))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Get %s %s", kind, key.Name))
 	defer span.End()
 
 	tc.Logger.Info("Getting object", "object", key.Name)
@@ -257,7 +272,7 @@ func (tc *tracingClient) Patch(ctx context.Context, obj client.Object, patch cli
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Patch %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Patch %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -279,7 +294,7 @@ func (tc *tracingClient) Delete(ctx context.Context, obj client.Object, opts ...
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("Delete %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("Delete %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	tc.Logger.Info("Deleting object", "object", obj.GetName())
@@ -298,7 +313,7 @@ func (tc *tracingClient) DeleteAllOf(ctx context.Context, obj client.Object, opt
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, fmt.Sprintf("DeleteAllOf %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, tc.Logger, tc.Tracer, obj, tc.scheme, fmt.Sprintf("DeleteAllOf %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	tc.Logger.Info("Deleting all of object", "object", obj.GetName())
@@ -327,7 +342,7 @@ func (ts *tracingStatusClient) Update(ctx context.Context, obj client.Object, op
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusUpdate %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusUpdate %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -347,10 +362,11 @@ func (ts *tracingStatusClient) Patch(ctx context.Context, obj client.Object, pat
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusPatch %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusPatch %s %s", kind, obj.GetName()))
 	defer span.End()
 
-	addTraceIDAnnotation(ctx, obj)
+	setConditionMessage("TraceID", span.SpanContext().TraceID().String(), obj, ts.scheme)
+	setConditionMessage("SpanID", span.SpanContext().SpanID().String(), obj, ts.scheme)
 	err = ts.StatusWriter.Patch(ctx, obj, patch, opts...)
 	if err != nil {
 		span.RecordError(err)
@@ -367,7 +383,7 @@ func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, su
 
 	kind := gvk.GroupKind().Kind
 
-	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, fmt.Sprintf("StatusCreate %s %s", kind, obj.GetName()))
+	ctx, span := startSpanFromContext(ctx, ts.Logger, ts.Tracer, obj, ts.scheme, fmt.Sprintf("StatusCreate %s %s", kind, obj.GetName()))
 	defer span.End()
 
 	addTraceIDAnnotation(ctx, obj)
@@ -379,7 +395,7 @@ func (ts *tracingStatusClient) Create(ctx context.Context, obj client.Object, su
 }
 
 // startSpanFromContext starts a new span from the context and attaches trace information to the object
-func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.Tracer, obj client.Object, operationName string) (context.Context, trace.Span) {
+func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.Tracer, obj client.Object, scheme *runtime.Scheme, operationName string) (context.Context, trace.Span) {
 	span := trace.SpanFromContext(ctx)
 	if span.SpanContext().IsValid() {
 		spanContext := trace.NewSpanContext(trace.SpanContextConfig{
@@ -393,11 +409,11 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 
 	if !span.SpanContext().IsValid() {
 		if obj != nil {
-			// No valid trace ID in context, check object annotations
-			if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
+			// no valid trace ID in context, check object conditions
+			if traceID, err := getConditionMessage("TraceID", obj, scheme); err == nil {
 				if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
 					spanContext := trace.NewSpanContext(trace.SpanContextConfig{})
-					if spanID, ok := obj.GetAnnotations()[constants.SpanIDAnnotation]; ok {
+					if spanID, err := getConditionMessage("SpanID", obj, scheme); err == nil {
 						if spanIDValue, err := trace.SpanIDFromHex(spanID); err == nil {
 							spanContext = trace.NewSpanContext(trace.SpanContextConfig{
 								TraceID: traceIDValue,
@@ -410,8 +426,28 @@ func startSpanFromContext(ctx context.Context, logger logr.Logger, tracer trace.
 						}
 					}
 					ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
-				} else {
-					logger.Error(err, "Invalid trace ID", "traceID", traceID)
+				}
+			} else {
+				// No valid trace ID in context, check object annotations
+				if traceID, ok := obj.GetAnnotations()[constants.TraceIDAnnotation]; ok {
+					if traceIDValue, err := trace.TraceIDFromHex(traceID); err == nil {
+						spanContext := trace.NewSpanContext(trace.SpanContextConfig{})
+						if spanID, ok := obj.GetAnnotations()[constants.SpanIDAnnotation]; ok {
+							if spanIDValue, err := trace.SpanIDFromHex(spanID); err == nil {
+								spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+									TraceID: traceIDValue,
+									SpanID:  spanIDValue,
+								})
+							} else {
+								spanContext = trace.NewSpanContext(trace.SpanContextConfig{
+									TraceID: traceIDValue,
+								})
+							}
+						}
+						ctx = trace.ContextWithRemoteSpanContext(ctx, spanContext)
+					} else {
+						logger.Error(err, "Invalid trace ID", "traceID", traceID)
+					}
 				}
 			}
 		}
@@ -513,4 +549,228 @@ func addTraceIDAnnotation(ctx context.Context, obj client.Object) {
 		annotations[constants.SpanIDAnnotation] = spanID
 		obj.SetAnnotations(annotations)
 	}
+}
+
+// getConditions retrieves the "conditions" field from the status of a Kubernetes object using type casting and returns it as []metav1.Condition.
+func getConditions(obj client.Object, scheme *runtime.Scheme) ([]metav1.Condition, error) {
+	gvk, err := apiutil.GVKForObject(obj, scheme)
+	if err != nil {
+		return nil, fmt.Errorf("problem getting the GVK: %w", err)
+	}
+
+	// Use the scheme to get the specific type of the object.
+	objTyped, err := scheme.New(gvk)
+	if err != nil {
+		return nil, fmt.Errorf("problem creating new object of kind %s: %w", gvk.Kind, err)
+	}
+
+	// Cast the object to its specific type.
+	if err := scheme.Convert(obj, objTyped, nil); err != nil {
+		return nil, fmt.Errorf("problem converting object to kind %s: %w", gvk.Kind, err)
+	}
+
+	// Use reflection to access the conditions field.
+	val := reflect.ValueOf(objTyped)
+	statusField := val.Elem().FieldByName("Status")
+	if !statusField.IsValid() {
+		return nil, fmt.Errorf("status field not found in kind %s", gvk.Kind)
+	}
+
+	conditionsField := statusField.FieldByName("Conditions")
+	if !conditionsField.IsValid() {
+		return nil, fmt.Errorf("conditions field not found in kind %s", gvk.Kind)
+	}
+
+	conditionsValue := conditionsField.Interface()
+	conditions, err := convertToMetaV1Conditions(conditionsValue)
+	if err != nil {
+		return nil, fmt.Errorf("error converting conditions for kind %s: %w", gvk.Kind, err)
+	}
+
+	return conditions, nil
+}
+
+// getConditionMessage retrieves the message for a specific condition type from a Kubernetes object.
+func getConditionMessage(conditionType string, obj client.Object, scheme *runtime.Scheme) (string, error) {
+	conditions, err := getConditions(obj, scheme)
+	if err != nil {
+		return "", err
+	}
+
+	for _, condition := range conditions {
+		if condition.Type == conditionType {
+			return condition.Message, nil
+		}
+	}
+
+	return "", fmt.Errorf("condition of type %s not found", conditionType)
+}
+
+// convertToMetaV1Conditions converts conditions of any supported type to []metav1.Condition.
+func convertToMetaV1Conditions(conditionsValue interface{}) ([]metav1.Condition, error) {
+	val := reflect.ValueOf(conditionsValue)
+	if val.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("conditions field is not a slice")
+	}
+
+	var metav1Conditions []metav1.Condition
+	for i := 0; i < val.Len(); i++ {
+		conditionVal := val.Index(i)
+		if conditionVal.Kind() == reflect.Ptr {
+			conditionVal = conditionVal.Elem()
+		}
+
+		condition := metav1.Condition{}
+		for _, field := range reflect.VisibleFields(conditionVal.Type()) {
+			fieldValue := conditionVal.FieldByIndex(field.Index)
+			switch field.Name {
+			case "Type":
+				condition.Type = fieldValue.String()
+			case "Status":
+				condition.Status = metav1.ConditionStatus(fieldValue.String())
+			case "Reason":
+				condition.Reason = fieldValue.String()
+			case "Message":
+				condition.Message = fieldValue.String()
+			case "LastTransitionTime":
+				condition.LastTransitionTime = fieldValue.Interface().(metav1.Time)
+			}
+		}
+		metav1Conditions = append(metav1Conditions, condition)
+	}
+
+	return metav1Conditions, nil
+}
+
+// convertFromMetaV1 converts []metav1.Condition to the specific type of conditions used by the Kubernetes object.
+func convertFromMetaV1(conditions []metav1.Condition, targetType reflect.Type) (interface{}, error) {
+	if targetType.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("target type is not a slice")
+	}
+
+	elemType := targetType.Elem()
+	if elemType.Kind() == reflect.Ptr {
+		elemType = elemType.Elem()
+	}
+
+	result := reflect.MakeSlice(targetType, len(conditions), len(conditions))
+	for i, cond := range conditions {
+		targetCond := reflect.New(elemType).Elem()
+
+		for _, field := range reflect.VisibleFields(elemType) {
+			fieldValue := targetCond.FieldByIndex(field.Index)
+			switch field.Name {
+			case "Type":
+				fieldValue.SetString(cond.Type)
+			case "Status":
+				fieldValue.SetString(string(cond.Status))
+			case "Reason":
+				fieldValue.SetString(cond.Reason)
+			case "Message":
+				fieldValue.SetString(cond.Message)
+			case "LastTransitionTime":
+				fieldValue.Set(reflect.ValueOf(cond.LastTransitionTime))
+			}
+		}
+
+		if targetType.Elem().Kind() == reflect.Ptr {
+			result.Index(i).Set(targetCond.Addr())
+		} else {
+			result.Index(i).Set(targetCond)
+		}
+	}
+
+	return result.Interface(), nil
+}
+
+// setConditions sets the "conditions" field in the status of a Kubernetes object using type casting.
+func setConditions(obj client.Object, conditions []metav1.Condition, scheme *runtime.Scheme) error {
+	gvk, err := apiutil.GVKForObject(obj, scheme)
+	if err != nil {
+		return fmt.Errorf("problem getting the GVK: %w", err)
+	}
+
+	// Use the scheme to get the specific type of the object.
+	objTyped, err := scheme.New(gvk)
+	if err != nil {
+		return fmt.Errorf("problem creating new object of kind %s: %w", gvk.Kind, err)
+	}
+
+	// Cast the object to its specific type.
+	if err := scheme.Convert(obj, objTyped, nil); err != nil {
+		return fmt.Errorf("problem converting object to kind %s: %w", gvk.Kind, err)
+	}
+
+	// Use reflection to set the conditions field.
+	val := reflect.ValueOf(objTyped)
+	statusField := val.Elem().FieldByName("Status")
+	if !statusField.IsValid() {
+		return fmt.Errorf("status field not found in kind %s", gvk.Kind)
+	}
+
+	conditionsField := statusField.FieldByName("Conditions")
+	if !conditionsField.IsValid() {
+		return fmt.Errorf("conditions field not found in kind %s", gvk.Kind)
+	}
+
+	convertedConditions, err := convertFromMetaV1(conditions, conditionsField.Type())
+	if err != nil {
+		return fmt.Errorf("error converting conditions for kind %s: %w", gvk.Kind, err)
+	}
+
+	conditionsField.Set(reflect.ValueOf(convertedConditions))
+
+	// Convert the typed object back to the unstructured object.
+	if err := scheme.Convert(objTyped, obj, nil); err != nil {
+		return fmt.Errorf("problem converting object back to unstructured: %w", err)
+	}
+
+	return nil
+}
+
+// setConditionMessage sets the message for a specific condition type in a Kubernetes object.
+func setConditionMessage(conditionType, message string, obj client.Object, scheme *runtime.Scheme) error {
+	conditions, err := getConditions(obj, scheme)
+	if err != nil {
+		return err
+	}
+
+	conditionFound := false
+	for i, condition := range conditions {
+		if condition.Type == conditionType {
+			conditions[i].Message = message
+			conditionFound = true
+			break
+		}
+	}
+
+	if !conditionFound {
+		// Add the condition if it doesn't exist
+		newCondition := metav1.Condition{
+			Type:    conditionType,
+			Status:  metav1.ConditionUnknown,
+			Message: message,
+		}
+		conditions = append(conditions, newCondition)
+	}
+
+	// Set the updated conditions back to the object
+	return setConditions(obj, conditions, scheme)
+}
+
+func deleteCondition(conditionType string, obj client.Object, scheme *runtime.Scheme) error {
+	conditions, err := getConditions(obj, scheme)
+	if err != nil {
+		return err
+	}
+
+	outConditions := []metav1.Condition{}
+	for i, condition := range conditions {
+		if condition.Type != conditionType {
+			outConditions = append(conditions[:i], conditions[i+1:]...)
+		}
+	}
+
+	// Set the updated conditions back to the object
+	return setConditions(obj, outConditions, scheme)
 }
