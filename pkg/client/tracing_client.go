@@ -152,7 +152,7 @@ func (tc *tracingClient) StartTrace(ctx context.Context, key client.ObjectKey, o
 	operationName := ""
 
 	if callerKind != "" && callerName != "" {
-		operationName = fmt.Sprintf("Get %s %s %s %s", callerKind, callerName, objectKind, obj.GetName())
+		operationName = fmt.Sprintf("Get %s %s %s %s", callerKind, callerName, objectKind, name)
 	} else {
 		operationName = fmt.Sprintf("StartTrace %s %s", objectKind, name)
 	}
