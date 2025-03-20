@@ -737,31 +737,22 @@ func setConditions(obj client.Object, conditions []metav1.Condition, scheme *run
 
 // setConditionMessage sets the message for a specific condition type in a Kubernetes object.
 func setConditionMessage(conditionType, message string, obj client.Object, scheme *runtime.Scheme) error {
+	// this prevents any accidental duplicates
+	deleteCondition(conditionType, obj, scheme)
+
 	conditions, err := getConditions(obj, scheme)
 	if err != nil {
 		return err
 	}
 
-	conditionFound := false
-	for i, condition := range conditions {
-		if condition.Type == conditionType {
-			conditions[i].Message = message
-			conditions[i].LastTransitionTime = metav1.Now()
-			conditionFound = true
-			break
-		}
+	// Add the condition if it doesn't exist
+	newCondition := metav1.Condition{
+		Type:               conditionType,
+		Status:             metav1.ConditionUnknown,
+		LastTransitionTime: metav1.Now(),
+		Message:            message,
 	}
-
-	if !conditionFound {
-		// Add the condition if it doesn't exist
-		newCondition := metav1.Condition{
-			Type:               conditionType,
-			Status:             metav1.ConditionUnknown,
-			LastTransitionTime: metav1.Now(),
-			Message:            message,
-		}
-		conditions = append(conditions, newCondition)
-	}
+	conditions = append(conditions, newCondition)
 
 	// Set the updated conditions back to the object
 	return setConditions(obj, conditions, scheme)
