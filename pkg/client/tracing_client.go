@@ -765,9 +765,9 @@ func deleteCondition(conditionType string, obj client.Object, scheme *runtime.Sc
 	}
 
 	outConditions := []metav1.Condition{}
-	for i, condition := range conditions {
+	for _, condition := range conditions {
 		if condition.Type != conditionType {
-			outConditions = append(conditions[:i], conditions[i+1:]...)
+			outConditions = append(outConditions, condition)
 		}
 	}
 
